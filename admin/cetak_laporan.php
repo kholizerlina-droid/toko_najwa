@@ -1,164 +1,97 @@
 <?php
-// admin/cetak_laporan.php - Cetak Dokumen Laporan Keuangan Toko Najwa
-require_once __DIR__ . '/../koneksi.php';
-require_once __DIR__ . '/../config/auth.php';
-require_once __DIR__ . '/../config/helpers.php';
+// admin/cetak_laporan.php - Laporan laba rugi siap cetak (kertas A4).
+require_once __DIR__ . '/../includes/init.php';
+require_once __DIR__ . '/../includes/laporan.php';
+wajib_login();
 
-require_login();
-$pengaturan = get_pengaturan($koneksi);
+$toko        = pengaturan_toko();
+$tgl_mulai   = tanggal_dari_url('tgl_mulai', date('Y-m-01'));
+$tgl_selesai = tanggal_dari_url('tgl_selesai', date('Y-m-d'));
+$lap         = hitung_laporan($tgl_mulai, $tgl_selesai);
 
-$tgl_mulai   = $_GET['tgl_mulai'] ?? date('Y-m-01');
-$tgl_selesai = $_GET['tgl_selesai'] ?? date('Y-m-d');
-
-// Penjualan & HPP
-$q_sales = $koneksi->prepare("SELECT 
-            COALESCE(SUM(td.subtotal), 0) AS total_penjualan,
-            COALESCE(SUM(td.harga_beli * td.qty), 0) AS total_hpp,
-            COALESCE(SUM(td.keuntungan), 0) AS laba_kotor,
-            COUNT(DISTINCT t.id) AS total_transaksi
-          FROM transaksi t
-          JOIN transaksi_detail td ON t.id = td.transaksi_id
-          WHERE DATE(t.tanggal) BETWEEN ? AND ?");
-$q_sales->bind_param("ss", $tgl_mulai, $tgl_selesai);
-$q_sales->execute();
-$sales = $q_sales->get_result()->fetch_assoc();
-
-$total_omset = (float)$sales['total_penjualan'];
-$total_hpp   = (float)$sales['total_hpp'];
-$laba_kotor  = (float)$sales['laba_kotor'];
-$total_trx   = (int)$sales['total_transaksi'];
-
-// Biaya
-$q_biaya_kat = $koneksi->prepare("SELECT kategori_pengeluaran, SUM(jumlah) AS subtotal FROM pengeluaran WHERE tanggal BETWEEN ? AND ? GROUP BY kategori_pengeluaran");
-$q_biaya_kat->bind_param("ss", $tgl_mulai, $tgl_selesai);
-$q_biaya_kat->execute();
-$biaya_kategori = $q_biaya_kat->get_result()->fetch_all(MYSQLI_ASSOC);
-
-$total_biaya = 0;
-foreach ($biaya_kategori as $bk) {
-    $total_biaya += $bk['subtotal'];
-}
-
-$laba_bersih = $laba_kotor - $total_biaya;
+$pengeluaran = ambil_semua(
+    'SELECT * FROM pengeluaran WHERE tanggal BETWEEN ? AND ? ORDER BY tanggal',
+    'ss', [$tgl_mulai, $tgl_selesai]
+);
+$terlaris = ambil_semua(
+    "SELECT p.nama_produk, SUM(d.qty) AS terjual, SUM(d.subtotal) AS omset, SUM(d.keuntungan) AS laba
+     FROM transaksi_detail d
+     JOIN transaksi t ON t.id = d.transaksi_id
+     JOIN produk p ON p.id = d.produk_id
+     WHERE DATE(t.tanggal) BETWEEN ? AND ?
+     GROUP BY p.id ORDER BY terjual DESC LIMIT 10",
+    'ss', [$tgl_mulai, $tgl_selesai]
+);
 ?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cetak Laporan Keuangan - <?= htmlspecialchars($pengaturan['nama_toko']); ?></title>
-    <link rel="stylesheet" href="../assets/css/bootstrap.min.css">
-    <style>
-        body {
-            font-family: 'Times New Roman', Times, serif;
-            color: #000;
-            background: #fff;
-            padding: 30px;
-        }
-        .kop-surat {
-            border-bottom: 3px double #000;
-            padding-bottom: 12px;
-            margin-bottom: 24px;
-            text-align: center;
-        }
-        @media print {
-            .no-print {
-                display: none !important;
-            }
-            body {
-                padding: 0;
-            }
-        }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Laporan Laba Rugi <?= e($tgl_mulai) ?> - <?= e($tgl_selesai) ?></title>
+    <link rel="stylesheet" href="<?= url('assets/vendor/bootstrap/css/bootstrap.min.css') ?>">
 </head>
-<body>
+<body class="bg-body-tertiary">
+<div class="container bg-white my-3 p-4 p-md-5 border" style="max-width: 800px;">
 
-<div class="container no-print mb-4 text-end">
-    <button onclick="window.print()" class="btn btn-success fw-bold">
-        Cetak Laporan (Print / Simpan PDF)
-    </button>
-    <a href="laporan.php" class="btn btn-outline-secondary">Kembali</a>
-</div>
-
-<div class="container" style="max-width: 800px;">
-    <!-- KOP RESMI TOKO -->
-    <div class="kop-surat">
-        <h3 class="fw-bold mb-0 text-uppercase"><?= htmlspecialchars($pengaturan['nama_toko']); ?></h3>
-        <p class="mb-0 fs-6"><?= htmlspecialchars($pengaturan['alamat']); ?></p>
-        <p class="mb-0 fs-6">Telepon / WhatsApp: <?= htmlspecialchars($pengaturan['telepon']); ?> • Pemilik: <?= htmlspecialchars($pengaturan['pemilik']); ?></p>
+    <div class="d-print-none d-flex justify-content-between mb-4">
+        <a href="laporan.php?tgl_mulai=<?= e($tgl_mulai) ?>&tgl_selesai=<?= e($tgl_selesai) ?>" class="btn btn-outline-secondary">&larr; Kembali</a>
+        <button type="button" class="btn btn-primary" onclick="window.print()">Cetak</button>
     </div>
 
-    <div class="text-center mb-4">
-        <h5 class="fw-bold text-uppercase text-decoration-underline mb-1">LAPORAN LABA RUGI OPERASIONAL</h5>
-        <span class="fs-6">Periode: <?= tgl_indo($tgl_mulai); ?> s.d. <?= tgl_indo($tgl_selesai); ?></span>
+    <div class="text-center border-bottom border-2 pb-3 mb-4">
+        <?= logo(64) ?>
+        <h1 class="h4 mt-2 mb-0"><?= e(strtoupper($toko['nama_toko'])) ?></h1>
+        <div class="small"><?= e($toko['alamat']) ?> &middot; Telp. <?= e($toko['telepon']) ?></div>
     </div>
 
-    <!-- TABEL REKAPITULASI -->
-    <table class="table table-bordered mb-4">
+    <h2 class="h5 text-center">LAPORAN LABA RUGI</h2>
+    <p class="text-center mb-4">Periode <?= tanggal_indo($tgl_mulai) ?> s.d. <?= tanggal_indo($tgl_selesai) ?></p>
+
+    <table class="table table-bordered">
         <tbody>
-            <tr class="table-light">
-                <th colspan="2" class="fw-bold">1. PENDAPATAN OPERASIONAL</th>
-            </tr>
-            <tr>
-                <td class="ps-4">Total Penjualan Sembako (<?= $total_trx; ?> Transaksi Kasir)</td>
-                <td class="text-end fw-bold"><?= rupiah($total_omset); ?></td>
-            </tr>
-            <tr class="table-light">
-                <th colspan="2" class="fw-bold">2. HARGA POKOK PENJUALAN (HPP)</th>
-            </tr>
-            <tr>
-                <td class="ps-4">Modal Beli Barang Terjual</td>
-                <td class="text-end">(<?= rupiah($total_hpp); ?>)</td>
-            </tr>
-            <tr class="table-secondary">
-                <th class="ps-4">LABA KOTOR (1 - 2)</th>
-                <th class="text-end"><?= rupiah($laba_kotor); ?></th>
-            </tr>
-            <tr class="table-light">
-                <th colspan="2" class="fw-bold">3. BIAYA OPERASIONAL TOKO</th>
-            </tr>
-            <?php if (empty($biaya_kategori)): ?>
-                <tr>
-                    <td class="ps-4 text-muted">Tidak ada pengeluaran operasional tercatat</td>
-                    <td class="text-end">Rp 0</td>
-                </tr>
-            <?php else: ?>
-                <?php foreach ($biaya_kategori as $bk): ?>
-                    <tr>
-                        <td class="ps-4"><?= htmlspecialchars($bk['kategori_pengeluaran']); ?></td>
-                        <td class="text-end">(<?= rupiah($bk['subtotal']); ?>)</td>
-                    </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-            <tr class="table-secondary">
-                <th class="ps-4">TOTAL BIAYA OPERASIONAL</th>
-                <th class="text-end">(<?= rupiah($total_biaya); ?>)</th>
-            </tr>
-            <tr class="table-success border-2">
-                <th class="fs-5 py-3">LABA BERSIH RIIL USAHA</th>
-                <th class="fs-5 py-3 text-end fw-bold"><?= rupiah($laba_bersih); ?></th>
-            </tr>
+            <tr><td>Total Penjualan (<?= $lap['jumlah_nota'] ?> nota)</td><td class="text-end"><?= rupiah($lap['omset']) ?></td></tr>
+            <tr><td>Harga Pokok Penjualan (HPP)</td><td class="text-end">(<?= rupiah($lap['hpp']) ?>)</td></tr>
+            <tr class="table-light fw-bold"><td>Laba Kotor</td><td class="text-end"><?= rupiah($lap['laba_kotor']) ?></td></tr>
+            <tr><td>Pengeluaran Operasional</td><td class="text-end">(<?= rupiah($lap['biaya']) ?>)</td></tr>
+            <tr class="table-secondary fw-bold"><td>LABA BERSIH</td><td class="text-end"><?= rupiah($lap['laba_bersih']) ?></td></tr>
         </tbody>
     </table>
 
-    <!-- TANDA TANGAN -->
-    <div class="row mt-5 pt-4">
-        <div class="col-6 text-center">
-            <p class="mb-0">Penyusun Sistem / Laporan:</p>
-            <p class="small text-muted mb-5">Tim Proyek Kolaborasi SMK N Tengaran</p>
-            <br><br>
-            <p class="fw-bold mb-0 text-decoration-underline">Kelompok 6 (RPL / PPLG)</p>
-            <p class="small">Kholiz Erlina & Sifa Fuji Febriyana</p>
-        </div>
-        <div class="col-6 text-center">
-            <p class="mb-0">Bonomerto, Suruh, <?= tgl_indo(date('Y-m-d')); ?></p>
-            <p class="small text-muted mb-5">Pemilik Warung Sembako Toko Najwa</p>
-            <br><br>
-            <p class="fw-bold mb-0 text-decoration-underline"><?= htmlspecialchars($pengaturan['pemilik']); ?></p>
-            <p class="small">Pelaku Usaha UMKM</p>
+    <?php if ($terlaris): ?>
+        <h3 class="h6 mt-4">Produk Terlaris</h3>
+        <table class="table table-sm table-bordered">
+            <thead class="table-light"><tr><th>Produk</th><th class="text-end">Terjual</th><th class="text-end">Omset</th><th class="text-end">Laba</th></tr></thead>
+            <tbody>
+                <?php foreach ($terlaris as $t): ?>
+                    <tr><td><?= e($t['nama_produk']) ?></td><td class="text-end"><?= $t['terjual'] ?></td>
+                        <td class="text-end"><?= rupiah($t['omset']) ?></td><td class="text-end"><?= rupiah($t['laba']) ?></td></tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    <?php endif; ?>
+
+    <?php if ($pengeluaran): ?>
+        <h3 class="h6 mt-4">Rincian Pengeluaran</h3>
+        <table class="table table-sm table-bordered">
+            <thead class="table-light"><tr><th>Tanggal</th><th>Kategori</th><th>Keterangan</th><th class="text-end">Jumlah</th></tr></thead>
+            <tbody>
+                <?php foreach ($pengeluaran as $p): ?>
+                    <tr><td><?= tanggal_indo($p['tanggal']) ?></td><td><?= e($p['kategori_pengeluaran']) ?></td>
+                        <td><?= e($p['keterangan']) ?></td><td class="text-end"><?= rupiah($p['jumlah']) ?></td></tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    <?php endif; ?>
+
+    <div class="row mt-5">
+        <div class="col-6 offset-6 text-center">
+            <div><?= tanggal_indo(date('Y-m-d')) ?></div>
+            <div>Pemilik,</div>
+            <div style="height: 70px;"></div>
+            <strong><u><?= e($toko['pemilik']) ?></u></strong>
         </div>
     </div>
 </div>
-
 </body>
 </html>

@@ -1,419 +1,301 @@
 <?php
-// admin/produk.php - Data Stok & Deteksi Kadaluarsa (Clean Retail Style)
-$page_title = 'Data Stok & Inventaris';
-require_once __DIR__ . '/header.php';
+// admin/produk.php - Data produk, stok, dan deteksi kadaluarsa.
+require_once __DIR__ . '/../includes/init_admin.php';
 
-// Handle Tambah / Edit / Hapus
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = $_POST['action'] ?? '';
+const DAFTAR_SATUAN = ['Pcs', 'Kg', 'Liter', 'Pouch', 'Bungkus', 'Botol', 'Kaleng', 'Renceng', 'Karung', 'Kotak', 'Galon'];
 
-    if ($action === 'tambah' || $action === 'edit') {
-        $kode_barcode = trim($_POST['kode_barcode'] ?? '');
-        $kategori_id  = (int)($_POST['kategori_id'] ?? 0);
-        $nama_produk  = trim($_POST['nama_produk'] ?? '');
-        $satuan       = trim($_POST['satuan'] ?? 'Pcs');
-        $harga_beli   = (float)($_POST['harga_beli'] ?? 0);
-        $harga_jual   = (float)($_POST['harga_jual'] ?? 0);
-        $stok         = (int)($_POST['stok'] ?? 0);
-        $min_stok     = (int)($_POST['min_stok'] ?? 5);
-        $tgl_kadaluarsa = !empty($_POST['tgl_kadaluarsa']) ? $_POST['tgl_kadaluarsa'] : null;
+/* ---------- Proses form ---------- */
+if (is_post()) {
+    $aksi = post('aksi');
+    $id   = (int) post('id');
 
-        if (empty($kode_barcode) || empty($nama_produk) || $kategori_id <= 0) {
-            set_flash('danger', 'Barcode, Kategori, dan Nama Produk wajib diisi!');
+    if ($aksi === 'tambah' || $aksi === 'ubah') {
+        $barcode     = post('kode_barcode');
+        $kategori_id = (int) post('kategori_id');
+        $nama        = post('nama_produk');
+        $satuan      = post('satuan', 'Pcs');
+        $harga_beli  = (float) post('harga_beli');
+        $harga_jual  = (float) post('harga_jual');
+        $stok        = (int) post('stok');
+        $min_stok    = (int) post('min_stok', '5');
+        $kadaluarsa  = tanggal_atau_null(post('tgl_kadaluarsa'));
+
+        $barcode_dipakai = ambil_nilai(
+            'SELECT COUNT(*) FROM produk WHERE kode_barcode = ? AND id <> ?', 'si', [$barcode, $id]
+        );
+
+        if ($barcode === '' || $nama === '' || $kategori_id <= 0) {
+            set_flash('danger', 'Barcode, kategori, dan nama produk wajib diisi.');
+        } elseif ($barcode_dipakai > 0) {
+            set_flash('danger', 'Kode barcode tersebut sudah dipakai produk lain.');
         } else {
-            if ($action === 'tambah') {
-                $cek = $koneksi->prepare("SELECT id FROM produk WHERE kode_barcode = ?");
-                $cek->bind_param("s", $kode_barcode);
-                $cek->execute();
-                if ($cek->get_result()->num_rows > 0) {
-                    set_flash('danger', 'Kode Barcode tersebut sudah digunakan.');
-                } else {
-                    $stmt = $koneksi->prepare("INSERT INTO produk (kode_barcode, kategori_id, nama_produk, satuan, harga_beli, harga_jual, stok, min_stok, tgl_kadaluarsa) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->bind_param("sisdddiis", $kode_barcode, $kategori_id, $nama_produk, $satuan, $harga_beli, $harga_jual, $stok, $min_stok, $tgl_kadaluarsa);
-                    $stmt->execute();
-                    set_flash('success', 'Produk sembako berhasil ditambahkan.');
-                }
+            try {
+                $foto_baru = simpan_gambar($_FILES['gambar'] ?? []);   // null jika tidak ada file
+            } catch (Exception $e) {
+                set_flash('danger', $e->getMessage());
+                redirect('produk.php');
+            }
+
+            if ($aksi === 'tambah') {
+                jalankan(
+                    'INSERT INTO produk (kode_barcode, kategori_id, nama_produk, satuan, harga_beli, harga_jual, stok, min_stok, tgl_kadaluarsa, gambar)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    'sissddiiss',
+                    [$barcode, $kategori_id, $nama, $satuan, $harga_beli, $harga_jual, $stok, $min_stok, $kadaluarsa, $foto_baru]
+                );
+                set_flash('success', 'Produk berhasil ditambahkan.');
             } else {
-                $id = (int)$_POST['id'];
-                $cek = $koneksi->prepare("SELECT id FROM produk WHERE kode_barcode = ? AND id != ?");
-                $cek->bind_param("si", $kode_barcode, $id);
-                $cek->execute();
-                if ($cek->get_result()->num_rows > 0) {
-                    set_flash('danger', 'Kode Barcode tersebut sudah digunakan.');
-                } else {
-                    $stmt = $koneksi->prepare("UPDATE produk SET kode_barcode=?, kategori_id=?, nama_produk=?, satuan=?, harga_beli=?, harga_jual=?, stok=?, min_stok=?, tgl_kadaluarsa=? WHERE id=?");
-                    $stmt->bind_param("sisdddiisi", $kode_barcode, $kategori_id, $nama_produk, $satuan, $harga_beli, $harga_jual, $stok, $min_stok, $tgl_kadaluarsa, $id);
-                    $stmt->execute();
-                    set_flash('success', 'Data produk sembako diperbarui.');
+                $foto_lama = ambil_nilai('SELECT gambar FROM produk WHERE id = ?', 'i', [$id]);
+                jalankan(
+                    'UPDATE produk SET kode_barcode = ?, kategori_id = ?, nama_produk = ?, satuan = ?, harga_beli = ?,
+                            harga_jual = ?, stok = ?, min_stok = ?, tgl_kadaluarsa = ?, gambar = ? WHERE id = ?',
+                    'sissddiissi',
+                    [$barcode, $kategori_id, $nama, $satuan, $harga_beli, $harga_jual, $stok, $min_stok, $kadaluarsa, $foto_baru ?? $foto_lama, $id]
+                );
+                if ($foto_baru) {
+                    hapus_gambar($foto_lama);   // foto lama diganti
                 }
+                set_flash('success', 'Data produk berhasil diperbarui.');
             }
         }
-        header("Location: produk.php");
-        exit;
-    }
-
-    if ($action === 'hapus') {
-        $id = (int)($_POST['id'] ?? 0);
-        $cek_trx = $koneksi->query("SELECT COUNT(*) FROM transaksi_detail WHERE produk_id = $id");
-        if ($cek_trx->fetch_row()[0] > 0) {
-            set_flash('danger', 'Produk tidak dapat dihapus karena sudah ada riwayat transaksi penjualan.');
+    } elseif ($aksi === 'hapus') {
+        if (ambil_nilai('SELECT COUNT(*) FROM transaksi_detail WHERE produk_id = ?', 'i', [$id]) > 0
+            || ambil_nilai('SELECT COUNT(*) FROM restock WHERE produk_id = ?', 'i', [$id]) > 0) {
+            set_flash('danger', 'Produk tidak bisa dihapus karena sudah punya riwayat penjualan / kulakan.');
         } else {
-            $stmt = $koneksi->prepare("DELETE FROM produk WHERE id = ?");
-            $stmt->bind_param("i", $id);
-            $stmt->execute();
+            hapus_gambar(ambil_nilai('SELECT gambar FROM produk WHERE id = ?', 'i', [$id]));
+            jalankan('DELETE FROM produk WHERE id = ?', 'i', [$id]);
             set_flash('success', 'Produk berhasil dihapus.');
         }
-        header("Location: produk.php");
-        exit;
     }
+    redirect('produk.php');
 }
 
-// Filter dan Query Data
-$kat_filter = isset($_GET['kategori']) ? (int)$_GET['kategori'] : 0;
-$stok_filter = $_GET['filter_stok'] ?? '';
-$exp_filter  = $_GET['filter_exp'] ?? '';
-$search_q    = trim($_GET['q'] ?? '');
+/* ---------- Ambil data (dengan filter dari URL) ---------- */
+$cari        = get('q');
+$kategori_id = (int) get('kategori');
+$filter_stok = get('filter_stok');   // menipis | habis
+$filter_exp  = get('filter_exp');    // segera | kadaluarsa
 
-$sql = "SELECT p.*, k.nama_kategori FROM produk p JOIN kategori k ON p.kategori_id = k.id WHERE 1=1";
-$params = [];
-$types = "";
+$sql    = 'SELECT p.*, k.nama_kategori FROM produk p JOIN kategori k ON k.id = p.kategori_id WHERE 1=1';
+$tipe   = '';
+$param  = [];
 
-if ($kat_filter > 0) {
-    $sql .= " AND p.kategori_id = ?";
-    $params[] = $kat_filter;
-    $types .= "i";
+if ($cari !== '') {
+    $sql .= ' AND (p.nama_produk LIKE ? OR p.kode_barcode LIKE ?)';
+    $tipe .= 'ss';
+    $param[] = "%$cari%";
+    $param[] = "%$cari%";
+}
+if ($kategori_id > 0) {
+    $sql .= ' AND p.kategori_id = ?';
+    $tipe .= 'i';
+    $param[] = $kategori_id;
+}
+if ($filter_stok === 'menipis') {
+    $sql .= ' AND p.stok <= p.min_stok';
+} elseif ($filter_stok === 'habis') {
+    $sql .= ' AND p.stok = 0';
+}
+if ($filter_exp === 'segera') {
+    $sql .= ' AND p.tgl_kadaluarsa <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)';
+} elseif ($filter_exp === 'kadaluarsa') {
+    $sql .= ' AND p.tgl_kadaluarsa < CURDATE()';
 }
 
-if ($stok_filter === 'low') {
-    $sql .= " AND p.stok <= p.min_stok AND p.stok > 0";
-} elseif ($stok_filter === 'empty') {
-    $sql .= " AND p.stok = 0";
-}
+$daftar_produk   = ambil_semua($sql . ' ORDER BY p.nama_produk', $tipe, $param);
+$daftar_kategori = ambil_semua('SELECT id, nama_kategori FROM kategori ORDER BY nama_kategori');
 
-if ($exp_filter === 'expired') {
-    $sql .= " AND p.tgl_kadaluarsa IS NOT NULL AND p.tgl_kadaluarsa < CURDATE()";
-} elseif ($exp_filter === 'warning') {
-    $sql .= " AND p.tgl_kadaluarsa IS NOT NULL AND p.tgl_kadaluarsa <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)";
-}
-
-if (!empty($search_q)) {
-    $sql .= " AND (p.nama_produk LIKE ? OR p.kode_barcode LIKE ?)";
-    $like = "%$search_q%";
-    $params[] = $like;
-    $params[] = $like;
-    $types .= "ss";
-}
-
-$sql .= " ORDER BY p.nama_produk ASC";
-
-$stmt = $koneksi->prepare($sql);
-if (!empty($params)) {
-    $stmt->bind_param($types, ...$params);
-}
-$stmt->execute();
-$daftar_produk = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-
-$kategori_options = $koneksi->query("SELECT * FROM kategori ORDER BY id ASC")->fetch_all(MYSQLI_ASSOC);
+/* ---------- Tampilan ---------- */
+$judul_halaman = 'Data Produk';
+$menu_aktif    = 'produk';
+include __DIR__ . '/../includes/layout/admin_top.php';
 ?>
 
-<div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
     <div>
-        <h4 class="fw-bold text-dark mb-1">Data Stok & Deteksi Kadaluarsa</h4>
-        <p class="text-muted small mb-0">Pantau ketersediaan barang, modal beli, harga jual, dan pencegahan kadaluarsa produk sembako.</p>
+        <h1 class="h3 mb-0">Data Produk &amp; Stok</h1>
+        <p class="text-body-secondary mb-0">Pantau stok, harga, dan tanggal kadaluarsa barang.</p>
     </div>
-    <button type="button" class="btn btn-pill-green shadow-sm" data-bs-toggle="modal" data-bs-target="#modalTambahProduk">
-        <i class="bi bi-plus-lg"></i>
-        <span>Tambah Produk</span>
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalProduk"
+            data-aksi="tambah" data-judul="Tambah Produk">
+        <i class="bi bi-plus-lg me-1"></i> Tambah Produk
     </button>
 </div>
 
-<!-- Filter Bar -->
-<div class="bento-card-clean mb-4 p-3">
-    <form method="GET" action="produk.php" class="row g-2 align-items-center">
+<!-- Filter -->
+<form method="get" class="card card-body mb-3">
+    <div class="row g-2">
         <div class="col-md-4">
-            <input type="text" name="q" class="form-control form-control-sm rounded-pill px-3" placeholder="Cari nama sembako / barcode..." value="<?= htmlspecialchars($search_q); ?>">
+            <input type="search" name="q" class="form-control" placeholder="Cari nama / barcode" value="<?= e($cari) ?>">
         </div>
         <div class="col-md-3">
-            <select name="kategori" class="form-select form-select-sm rounded-pill px-3">
-                <option value="0">Semua Kategori</option>
-                <?php foreach ($kategori_options as $ko): ?>
-                    <option value="<?= $ko['id']; ?>" <?= ($kat_filter === (int)$ko['id']) ? 'selected' : ''; ?>>
-                        <?= htmlspecialchars($ko['nama_kategori']); ?>
-                    </option>
+            <select name="kategori" class="form-select">
+                <option value="0">Semua kategori</option>
+                <?php foreach ($daftar_kategori as $k): ?>
+                    <option value="<?= $k['id'] ?>" <?= $kategori_id === (int) $k['id'] ? 'selected' : '' ?>><?= e($k['nama_kategori']) ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
         <div class="col-md-2">
-            <select name="filter_exp" class="form-select form-select-sm rounded-pill px-3">
-                <option value="">Status Kadaluarsa</option>
-                <option value="warning" <?= ($exp_filter === 'warning') ? 'selected' : ''; ?>>Mendekati Expired (&lt; 30 Hari)</option>
-                <option value="expired" <?= ($exp_filter === 'expired') ? 'selected' : ''; ?>>Sudah Expired</option>
+            <select name="filter_stok" class="form-select">
+                <option value="">Semua stok</option>
+                <option value="menipis" <?= $filter_stok === 'menipis' ? 'selected' : '' ?>>Stok menipis</option>
+                <option value="habis" <?= $filter_stok === 'habis' ? 'selected' : '' ?>>Stok habis</option>
             </select>
         </div>
         <div class="col-md-2">
-            <select name="filter_stok" class="form-select form-select-sm rounded-pill px-3">
-                <option value="">Status Stok</option>
-                <option value="low" <?= ($stok_filter === 'low') ? 'selected' : ''; ?>>Stok Menipis</option>
-                <option value="empty" <?= ($stok_filter === 'empty') ? 'selected' : ''; ?>>Stok Habis</option>
+            <select name="filter_exp" class="form-select">
+                <option value="">Semua tanggal</option>
+                <option value="segera" <?= $filter_exp === 'segera' ? 'selected' : '' ?>>&le; 30 hari lagi</option>
+                <option value="kadaluarsa" <?= $filter_exp === 'kadaluarsa' ? 'selected' : '' ?>>Sudah kadaluarsa</option>
             </select>
         </div>
-        <div class="col-md-1 d-flex gap-1">
-            <button type="submit" class="btn btn-sm btn-pill-green py-1 px-3 w-100"><i class="bi bi-funnel"></i></button>
-            <a href="produk.php" class="btn btn-sm btn-pill-white py-1 px-2" title="Reset"><i class="bi bi-arrow-counterclockwise"></i></a>
+        <div class="col-md-1 d-grid">
+            <button type="submit" class="btn btn-outline-primary" aria-label="Terapkan filter"><i class="bi bi-funnel"></i></button>
         </div>
-    </form>
-</div>
+    </div>
+</form>
 
-<!-- Table Data Produk -->
-<div class="bento-card-clean p-0 overflow-hidden">
+<!-- Tabel -->
+<div class="card">
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
-            <thead class="table-light small">
+            <thead class="table-light">
                 <tr>
-                    <th class="ps-4" style="width: 50px;">#</th>
-                    <th>Nama Produk Sembako</th>
-                    <th>Kategori</th>
-                    <th class="text-end">Harga Beli</th>
-                    <th class="text-end">Harga Jual</th>
-                    <th class="text-center">Sisa Stok</th>
-                    <th>Kadaluarsa</th>
-                    <th class="text-center pe-4" style="width: 100px;">Aksi</th>
+                    <th>Produk</th><th>Kategori</th>
+                    <th class="text-end">Harga Beli</th><th class="text-end">Harga Jual</th>
+                    <th class="text-center">Stok</th><th>Kadaluarsa</th><th class="text-end">Aksi</th>
                 </tr>
             </thead>
             <tbody>
-                <?php if (empty($daftar_produk)): ?>
+                <?php foreach ($daftar_produk as $p): $exp = status_kadaluarsa($p['tgl_kadaluarsa']); ?>
                     <tr>
-                        <td colspan="8" class="text-center py-5 text-muted small">
-                            <i class="bi bi-box fs-2 d-block mb-1"></i>
-                            Tidak ada produk cocok.
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <img src="<?= gambar_produk($p['gambar']) ?>" alt="" class="foto-produk-sm me-2">
+                                <div>
+                                    <div class="fw-semibold"><?= e($p['nama_produk']) ?></div>
+                                    <small class="text-body-secondary font-monospace"><?= e($p['kode_barcode']) ?></small>
+                                </div>
+                            </div>
+                        </td>
+                        <td><?= e($p['nama_kategori']) ?></td>
+                        <td class="text-end"><?= rupiah($p['harga_beli']) ?></td>
+                        <td class="text-end fw-semibold"><?= rupiah($p['harga_jual']) ?></td>
+                        <td class="text-center">
+                            <span class="badge <?= $p['stok'] <= $p['min_stok'] ? 'text-bg-danger' : 'text-bg-success' ?>">
+                                <?= $p['stok'] ?> <?= e($p['satuan']) ?>
+                            </span>
+                        </td>
+                        <td><span class="badge <?= $exp['badge'] ?>"><?= e($exp['label']) ?></span></td>
+                        <td class="text-end text-nowrap">
+                            <a href="restock.php?produk_id=<?= $p['id'] ?>" class="btn btn-sm btn-outline-success" title="Kulakan"><i class="bi bi-truck"></i></a>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" title="Ubah"
+                                    data-bs-toggle="modal" data-bs-target="#modalProduk"
+                                    data-aksi="ubah" data-judul="Ubah Produk" data-id="<?= $p['id'] ?>"
+                                    data-kode_barcode="<?= e($p['kode_barcode']) ?>"
+                                    data-kategori_id="<?= $p['kategori_id'] ?>"
+                                    data-nama_produk="<?= e($p['nama_produk']) ?>"
+                                    data-satuan="<?= e($p['satuan']) ?>"
+                                    data-harga_beli="<?= (int) $p['harga_beli'] ?>"
+                                    data-harga_jual="<?= (int) $p['harga_jual'] ?>"
+                                    data-stok="<?= $p['stok'] ?>"
+                                    data-min_stok="<?= $p['min_stok'] ?>"
+                                    data-tgl_kadaluarsa="<?= e($p['tgl_kadaluarsa']) ?>">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <form method="post" class="d-inline" data-konfirmasi="Hapus produk &quot;<?= e($p['nama_produk']) ?>&quot;?">
+                                <?= csrf_field() ?>
+                                <input type="hidden" name="aksi" value="hapus">
+                                <input type="hidden" name="id" value="<?= $p['id'] ?>">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Hapus"><i class="bi bi-trash"></i></button>
+                            </form>
                         </td>
                     </tr>
-                <?php else: ?>
-                    <?php foreach ($daftar_produk as $idx => $p): 
-                        $exp_status = cek_status_kadaluarsa($p['tgl_kadaluarsa']);
-                        $svg = '../assets/img/' . get_product_svg($p['nama_produk'], $p['nama_kategori']);
-                    ?>
-                        <tr>
-                            <td class="ps-4 text-muted small"><?= $idx + 1; ?></td>
-                            <td>
-                                <div class="d-flex align-items-center">
-                                    <div class="cart-item-img me-2">
-                                        <img src="<?= $svg; ?>" style="width: 28px; height: 28px; object-fit: contain;">
-                                    </div>
-                                    <div>
-                                        <strong class="text-dark small d-block"><?= htmlspecialchars($p['nama_produk']); ?></strong>
-                                        <small class="text-muted font-monospace" style="font-size: 0.72rem;"><?= htmlspecialchars($p['kode_barcode']); ?></small>
-                                    </div>
-                                </div>
-                            </td>
-                            <td>
-                                <span class="badge bg-light text-secondary border rounded-pill"><?= htmlspecialchars($p['nama_kategori']); ?></span>
-                            </td>
-                            <td class="text-end small text-muted"><?= rupiah($p['harga_beli']); ?></td>
-                            <td class="text-end fw-bold text-success small"><?= rupiah($p['harga_jual']); ?></td>
-                            <td class="text-center">
-                                <?php if ($p['stok'] <= $p['min_stok']): ?>
-                                    <span class="badge bg-danger rounded-pill"><?= $p['stok']; ?> <?= $p['satuan']; ?></span>
-                                <?php else: ?>
-                                    <span class="badge bg-success bg-opacity-10 text-success rounded-pill fw-bold"><?= $p['stok']; ?> <?= $p['satuan']; ?></span>
-                                <?php endif; ?>
-                            </td>
-                            <td>
-                                <span class="badge bg-<?= $exp_status['badge']; ?> rounded-pill small">
-                                    <?= $exp_status['label']; ?>
-                                </span>
-                            </td>
-                            <td class="text-center pe-4">
-                                <div class="btn-group btn-group-sm">
-                                    <button type="button" class="btn btn-outline-secondary btn-sm p-1" onclick="bukaModalEdit(<?= htmlspecialchars(json_encode($p)); ?>)">
-                                        <i class="bi bi-pencil"></i>
-                                    </button>
-                                    <button type="button" class="btn btn-outline-danger btn-sm p-1" onclick="konfirmasiHapus(<?= $p['id']; ?>, '<?= addslashes(htmlspecialchars($p['nama_produk'])); ?>')">
-                                        <i class="bi bi-trash"></i>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
+                <?php endforeach; ?>
+                <?php if (!$daftar_produk): ?>
+                    <tr><td colspan="7" class="text-center text-body-secondary py-5">Tidak ada produk yang cocok.</td></tr>
                 <?php endif; ?>
             </tbody>
         </table>
     </div>
+    <div class="card-footer text-body-secondary small"><?= count($daftar_produk) ?> produk ditampilkan</div>
 </div>
 
-<!-- Modal Tambah Produk -->
-<div class="modal fade" id="modalTambahProduk" tabindex="-1">
+<!-- Modal tambah / ubah produk -->
+<div class="modal fade" id="modalProduk" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content border-0 shadow-lg rounded-4">
-            <div class="modal-header border-bottom py-3">
-                <h5 class="modal-title fw-bold text-dark"><i class="bi bi-plus-circle text-success me-2"></i>Tambah Produk Sembako</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <form method="post" enctype="multipart/form-data" class="modal-content">
+            <?= csrf_field() ?>
+            <input type="hidden" name="aksi" value="tambah">
+            <input type="hidden" name="id">
+            <div class="modal-header">
+                <h2 class="modal-title h5">Tambah Produk</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
             </div>
-            <form method="POST" action="produk.php">
-                <input type="hidden" name="action" value="tambah">
-                <div class="modal-body p-4">
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label small fw-semibold text-muted">Kode Barcode</label>
-                            <div class="input-group">
-                                <input type="text" name="kode_barcode" id="tambah_barcode" class="form-control rounded-start-pill ps-3" placeholder="Contoh: 8991234567" required>
-                                <button type="button" class="btn btn-outline-secondary rounded-end-pill px-3" onclick="generateBarcode('tambah_barcode')">Acak</button>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label small fw-semibold text-muted">Kategori</label>
-                            <select name="kategori_id" class="form-select rounded-pill px-3" required>
-                                <option value="">Pilih Kategori</option>
-                                <?php foreach ($kategori_options as $ko): ?>
-                                    <option value="<?= $ko['id']; ?>"><?= htmlspecialchars($ko['nama_kategori']); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="col-md-8">
-                            <label class="form-label small fw-semibold text-muted">Nama Produk Sembako</label>
-                            <input type="text" name="nama_produk" class="form-control rounded-pill px-3" placeholder="Contoh: Beras C4 Super 5 Kg" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-semibold text-muted">Satuan</label>
-                            <select name="satuan" class="form-select rounded-pill px-3">
-                                <option value="Pcs">Pcs</option>
-                                <option value="Kg">Kg</option>
-                                <option value="Liter">Liter</option>
-                                <option value="Pouch">Pouch</option>
-                                <option value="Bungkus">Bungkus</option>
-                                <option value="Botol">Botol</option>
-                                <option value="Kaleng">Kaleng</option>
-                                <option value="Renceng">Renceng</option>
-                                <option value="Karung">Karung</option>
-                            </select>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label small fw-semibold text-muted">Harga Beli Modal (HPP)</label>
-                            <input type="number" name="harga_beli" class="form-control rounded-pill px-3" placeholder="Rp" min="0" required>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label small fw-semibold text-muted">Harga Jual Eceran</label>
-                            <input type="number" name="harga_jual" class="form-control rounded-pill px-3" placeholder="Rp" min="0" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-semibold text-muted">Stok Awal</label>
-                            <input type="number" name="stok" class="form-control rounded-pill px-3" value="10" min="0" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-semibold text-muted">Batas Minimal Stok (Alert)</label>
-                            <input type="number" name="min_stok" class="form-control rounded-pill px-3" value="5" min="1" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-semibold text-muted">Tanggal Kadaluarsa</label>
-                            <input type="date" name="tgl_kadaluarsa" class="form-control rounded-pill px-3">
-                        </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="pBarcode">Kode Barcode</label>
+                        <input type="text" class="form-control" id="pBarcode" name="kode_barcode" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="pKategori">Kategori</label>
+                        <select class="form-select" id="pKategori" name="kategori_id" required>
+                            <option value="">Pilih kategori</option>
+                            <?php foreach ($daftar_kategori as $k): ?>
+                                <option value="<?= $k['id'] ?>"><?= e($k['nama_kategori']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label" for="pNama">Nama Produk</label>
+                        <input type="text" class="form-control" id="pNama" name="nama_produk" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="pSatuan">Satuan</label>
+                        <select class="form-select" id="pSatuan" name="satuan">
+                            <?php foreach (DAFTAR_SATUAN as $s): ?>
+                                <option><?= $s ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="pBeli">Harga Beli (modal)</label>
+                        <div class="input-group"><span class="input-group-text">Rp</span>
+                            <input type="number" class="form-control" id="pBeli" name="harga_beli" min="0" required></div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="pJual">Harga Jual</label>
+                        <div class="input-group"><span class="input-group-text">Rp</span>
+                            <input type="number" class="form-control" id="pJual" name="harga_jual" min="0" required></div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="pStok">Stok</label>
+                        <input type="number" class="form-control" id="pStok" name="stok" min="0" value="0" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="pMin">Batas Stok Menipis</label>
+                        <input type="number" class="form-control" id="pMin" name="min_stok" min="0" value="5" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="pExp">Tanggal Kadaluarsa</label>
+                        <input type="date" class="form-control" id="pExp" name="tgl_kadaluarsa">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="pFoto">Foto Produk</label>
+                        <input type="file" class="form-control" id="pFoto" name="gambar" accept="image/jpeg,image/png,image/webp">
+                        <div class="form-text">JPG, PNG, atau WEBP, maksimal 2 MB. Saat mengubah produk, kosongkan jika tidak ingin mengganti foto.</div>
                     </div>
                 </div>
-                <div class="modal-footer border-top bg-light">
-                    <button type="button" class="btn btn-pill-white" data-bs-dismiss="modal">Batal</button>
-                    <button type="submit" class="btn btn-pill-green">Simpan Produk</button>
-                </div>
-            </form>
-        </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+                <button type="submit" class="btn btn-primary">Simpan</button>
+            </div>
+        </form>
     </div>
 </div>
 
-<!-- Modal Edit Produk -->
-<div class="modal fade" id="modalEditProduk" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content border-0 shadow-lg rounded-4">
-            <div class="modal-header border-bottom py-3">
-                <h5 class="modal-title fw-bold text-dark"><i class="bi bi-pencil-square text-primary me-2"></i>Edit Produk</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <form method="POST" action="produk.php">
-                <input type="hidden" name="action" value="edit">
-                <input type="hidden" name="id" id="edit_id">
-                <div class="modal-body p-4">
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label small fw-semibold text-muted">Kode Barcode</label>
-                            <input type="text" name="kode_barcode" id="edit_barcode" class="form-control rounded-pill px-3" required>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label small fw-semibold text-muted">Kategori</label>
-                            <select name="kategori_id" id="edit_kategori" class="form-select rounded-pill px-3" required>
-                                <?php foreach ($kategori_options as $ko): ?>
-                                    <option value="<?= $ko['id']; ?>"><?= htmlspecialchars($ko['nama_kategori']); ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="col-md-8">
-                            <label class="form-label small fw-semibold text-muted">Nama Produk Sembako</label>
-                            <input type="text" name="nama_produk" id="edit_nama" class="form-control rounded-pill px-3" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-semibold text-muted">Satuan</label>
-                            <input type="text" name="satuan" id="edit_satuan" class="form-control rounded-pill px-3" required>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label small fw-semibold text-muted">Harga Beli Modal</label>
-                            <input type="number" name="harga_beli" id="edit_harga_beli" class="form-control rounded-pill px-3" min="0" required>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label small fw-semibold text-muted">Harga Jual</label>
-                            <input type="number" name="harga_jual" id="edit_harga_jual" class="form-control rounded-pill px-3" min="0" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-semibold text-muted">Stok Sekarang</label>
-                            <input type="number" name="stok" id="edit_stok" class="form-control rounded-pill px-3" min="0" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-semibold text-muted">Batas Minimal Stok</label>
-                            <input type="number" name="min_stok" id="edit_min_stok" class="form-control rounded-pill px-3" min="1" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-semibold text-muted">Tanggal Kadaluarsa</label>
-                            <input type="date" name="tgl_kadaluarsa" id="edit_kadaluarsa" class="form-control rounded-pill px-3">
-                        </div>
-                    </div>
-                </div>
-                <div class="modal-footer border-top bg-light">
-                    <button type="button" class="btn btn-pill-white" data-bs-dismiss="modal">Batal</button>
-                    <button type="submit" class="btn btn-pill-green">Simpan Perubahan</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-<form id="formHapus" method="POST" action="produk.php" style="display:none;">
-    <input type="hidden" name="action" value="hapus">
-    <input type="hidden" name="id" id="hapus_id">
-</form>
-
-<script>
-    function generateBarcode(inputId) {
-        const rand = Math.floor(1000000 + Math.random() * 9000000);
-        document.getElementById(inputId).value = '899' + rand;
-    }
-
-    function bukaModalEdit(p) {
-        document.getElementById('edit_id').value = p.id;
-        document.getElementById('edit_barcode').value = p.kode_barcode;
-        document.getElementById('edit_kategori').value = p.kategori_id;
-        document.getElementById('edit_nama').value = p.nama_produk;
-        document.getElementById('edit_satuan').value = p.satuan;
-        document.getElementById('edit_harga_beli').value = parseInt(p.harga_beli);
-        document.getElementById('edit_harga_jual').value = parseInt(p.harga_jual);
-        document.getElementById('edit_stok').value = p.stok;
-        document.getElementById('edit_min_stok').value = p.min_stok;
-        document.getElementById('edit_kadaluarsa').value = p.tgl_kadaluarsa || '';
-
-        new bootstrap.Modal(document.getElementById('modalEditProduk')).show();
-    }
-
-    function konfirmasiHapus(id, nama) {
-        if (confirm('Yakin ingin menghapus sembako: "' + nama + '"?')) {
-            document.getElementById('hapus_id').value = id;
-            document.getElementById('formHapus').submit();
-        }
-    }
-</script>
-
-<?php require_once __DIR__ . '/footer.php'; ?>
+<?php include __DIR__ . '/../includes/layout/admin_bottom.php'; ?>

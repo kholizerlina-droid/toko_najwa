@@ -1,9 +1,6 @@
 <?php
-// logout.php
-require_once __DIR__ . '/config/auth.php';
+// logout.php - Keluar dari sistem.
+require_once __DIR__ . '/includes/init.php';
 
-session_unset();
-session_destroy();
-
-header("Location: login.php?msg=logout");
-exit;
+proses_logout();
+redirect(url('login.php?msg=logout'));

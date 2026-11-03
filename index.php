@@ -1,455 +1,253 @@
 <?php
-// index.php - Web Utama Toko Najwa (Design Reference: Image 2 Retail UI)
-require_once __DIR__ . '/koneksi.php';
-require_once __DIR__ . '/config/helpers.php';
+// index.php - Website publik Toko Najwa: profil warung, katalog sembako, dan pesan-antar via WhatsApp.
+require_once __DIR__ . '/includes/init.php';
 
-$pengaturan = get_pengaturan($koneksi);
+$toko = pengaturan_toko();
 
-// Kategori Produk
-$kategori_list = [];
-$res_kat = $koneksi->query("SELECT * FROM kategori ORDER BY id ASC");
-while ($row = $res_kat->fetch_assoc()) {
-    $kategori_list[] = $row;
+/* ---------- Ambil data katalog (dengan filter) ---------- */
+$cari        = get('q');
+$kategori_id = (int) get('kategori');
+
+$sql   = 'SELECT p.id, p.nama_produk, p.satuan, p.harga_jual, p.gambar, k.nama_kategori
+          FROM produk p JOIN kategori k ON k.id = p.kategori_id WHERE p.stok > 0';
+$tipe  = '';
+$param = [];
+if ($cari !== '') {
+    $sql .= ' AND p.nama_produk LIKE ?';
+    $tipe .= 's';
+    $param[] = "%$cari%";
+}
+if ($kategori_id > 0) {
+    $sql .= ' AND p.kategori_id = ?';
+    $tipe .= 'i';
+    $param[] = $kategori_id;
 }
 
-// Filter Produk
-$kategori_filter = isset($_GET['kategori']) ? (int)$_GET['kategori'] : 0;
-$search = isset($_GET['q']) ? trim($_GET['q']) : '';
-
-$sql = "SELECT p.*, k.nama_kategori FROM produk p JOIN kategori k ON p.kategori_id = k.id WHERE p.stok > 0";
-$params = [];
-$types = "";
-
-if ($kategori_filter > 0) {
-    $sql .= " AND p.kategori_id = ?";
-    $params[] = $kategori_filter;
-    $types .= "i";
-}
-
-if (!empty($search)) {
-    $sql .= " AND (p.nama_produk LIKE ? OR p.kode_barcode LIKE ?)";
-    $like = "%$search%";
-    $params[] = $like;
-    $params[] = $like;
-    $types .= "ss";
-}
-
-$sql .= " ORDER BY p.nama_produk ASC";
-
-$stmt = $koneksi->prepare($sql);
-if (!empty($params)) {
-    $stmt->bind_param($types, ...$params);
-}
-$stmt->execute();
-$produk_list = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$daftar_produk   = ambil_semua($sql . ' ORDER BY p.nama_produk', $tipe, $param);
+$daftar_kategori = ambil_semua('SELECT id, nama_kategori FROM kategori ORDER BY id');
 ?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= htmlspecialchars($pengaturan['nama_toko']); ?> - Belanja Sembako Warga</title>
-    <link rel="stylesheet" href="assets/css/bootstrap.min.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><?= e($toko['nama_toko']) ?> - Belanja Sembako Warga</title>
+    <meta name="description" content="Warung sembako <?= e($toko['nama_toko']) ?>: harga bersahabat, pesan-antar gratis lewat WhatsApp.">
+    <link rel="stylesheet" href="<?= url('assets/vendor/bootstrap/css/bootstrap.min.css') ?>">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-    <link rel="stylesheet" href="assets/css/custom.css">
+    <link rel="stylesheet" href="<?= url('assets/css/app.css') ?>">
 </head>
-<body>
+<body data-wa="<?= e(nomor_wa($toko['telepon'])) ?>">
 
-<div class="retail-window-wrapper">
-    <!-- Slim Left Navigation Rail (Like Image 2 Left Sidebar) -->
-    <aside class="retail-sidebar-rail">
-        <a href="index.php" class="rail-logo-badge" title="<?= htmlspecialchars($pengaturan['nama_toko']); ?>">
-            <img src="assets/img/logo.svg" alt="Toko Najwa Logo">
+<!-- Navigasi -->
+<nav class="navbar navbar-expand-lg bg-body border-bottom sticky-top">
+    <div class="container">
+        <a class="navbar-brand d-flex align-items-center fw-bold" href="<?= url('index.php') ?>">
+            <?= logo(40, 'me-2') ?>
+            <?= e($toko['nama_toko']) ?>
         </a>
-
-        <ul class="rail-nav-list">
-            <li>
-                <a href="index.php" class="rail-btn active" title="Katalog Sembako">
-                    <i class="bi bi-house-door"></i>
-                </a>
-            </li>
-            <li>
-                <a href="#katalog" class="rail-btn" title="Pilihan Sembako">
-                    <i class="bi bi-grid"></i>
-                </a>
-            </li>
-            <li>
-                <a href="#lokasiModal" data-bs-toggle="modal" class="rail-btn" title="Lokasi & Jam Buka">
-                    <i class="bi bi-geo-alt"></i>
-                </a>
-            </li>
-            <li>
-                <a href="#qrisModal" data-bs-toggle="modal" class="rail-btn" title="QRIS Toko Najwa">
-                    <i class="bi bi-qr-code"></i>
-                </a>
-            </li>
-            <li>
-                <a href="https://wa.me/<?= preg_replace('/[^0-9]/', '', $pengaturan['telepon']); ?>" target="_blank" class="rail-btn" title="WhatsApp Bu Dhiyah">
-                    <i class="bi bi-whatsapp"></i>
-                </a>
-            </li>
-        </ul>
-
-        <!-- Hidden Discreet Admin Link at Bottom (Only admin/presenter knows) -->
-        <div class="mt-auto d-none d-lg-block">
-            <a href="login.php" class="rail-btn" title="Akses Kasir" style="opacity: 0.35;">
-                <i class="bi bi-shield-lock" style="font-size: 1rem;"></i>
-            </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#menuUtama" aria-label="Buka menu">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="menuUtama">
+            <ul class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
+                <li class="nav-item"><a class="nav-link" href="#layanan">Layanan</a></li>
+                <li class="nav-item"><a class="nav-link" href="#katalog">Katalog</a></li>
+                <li class="nav-item"><a class="nav-link" href="#lokasi">Lokasi</a></li>
+                <li class="nav-item">
+                    <button type="button" class="btn btn-primary position-relative" data-bs-toggle="offcanvas" data-bs-target="#panelKeranjang">
+                        <i class="bi bi-cart3 me-1"></i> Keranjang
+                        <span id="lencanaKeranjang" class="badge text-bg-danger ms-1">0</span>
+                    </button>
+                </li>
+            </ul>
         </div>
-    </aside>
-
-    <!-- Main Workspace Area -->
-    <div class="retail-main-area">
-        <!-- Catalog Pane (Like Image 2 Left & Center) -->
-        <div class="retail-catalog-pane" id="katalog">
-            <!-- Topbar (Date & Store Title & Search) -->
-            <div class="pane-topbar">
-                <div>
-                    <div class="topbar-date"><?= tgl_indo(date('Y-m-d')); ?></div>
-                    <h2 class="topbar-title"><?= htmlspecialchars($pengaturan['nama_toko']); ?></h2>
-                </div>
-
-                <form method="GET" action="index.php" class="d-flex align-items-center">
-                    <?php if ($kategori_filter > 0): ?>
-                        <input type="hidden" name="kategori" value="<?= $kategori_filter; ?>">
-                    <?php endif; ?>
-                    <div class="search-pill-box">
-                        <i class="bi bi-search text-muted"></i>
-                        <input type="text" name="q" placeholder="Cari sembako di sini..." value="<?= htmlspecialchars($search); ?>">
-                    </div>
-                </form>
-            </div>
-
-            <!-- Section Headline & View All -->
-            <div class="section-headline-row">
-                <h4 class="section-headline">Pilihan Sembako Terbaik</h4>
-                <a href="index.php" class="text-decoration-none small fw-bold" style="color: var(--primary-green);">Lihat Semua</a>
-            </div>
-
-            <!-- Category Pills Bar (Horizontal Scrollable like Image 2) -->
-            <div class="category-pills-bar">
-                <a href="index.php?q=<?= urlencode($search); ?>" class="category-pill-btn <?= ($kategori_filter == 0) ? 'active' : ''; ?>">
-                    Semua
-                </a>
-                <?php foreach ($kategori_list as $kat): ?>
-                    <a href="index.php?kategori=<?= $kat['id']; ?>&q=<?= urlencode($search); ?>" class="category-pill-btn <?= ($kategori_filter == $kat['id']) ? 'active' : ''; ?>">
-                        <?= htmlspecialchars($kat['nama_kategori']); ?>
-                    </a>
-                <?php endforeach; ?>
-            </div>
-
-            <!-- Product Cards Grid (Like Image 2 Food Cards) -->
-            <div class="row g-3">
-                <?php if (empty($produk_list)): ?>
-                    <div class="col-12 py-5 text-center">
-                        <div class="p-5 bg-white rounded-4 border text-center max-w-500 mx-auto">
-                            <i class="bi bi-basket3 fs-1 text-muted d-block mb-2"></i>
-                            <h5 class="fw-bold text-dark">Sembako Tidak Ditemukan</h5>
-                            <p class="text-muted small">Silakan cari nama sembako lainnya.</p>
-                            <a href="index.php" class="btn btn-add-to-cart px-4 py-2">Tampilkan Semua</a>
-                        </div>
-                    </div>
-                <?php else: ?>
-                    <?php foreach ($produk_list as $p): 
-                        $svg_icon = 'assets/img/' . get_product_svg($p['nama_produk'], $p['nama_kategori']);
-                    ?>
-                        <div class="col-xl-4 col-md-6">
-                            <div class="retail-product-card">
-                                <span class="product-wish-badge" onclick="this.classList.toggle('text-danger'); this.classList.toggle('bi-heart-fill'); this.classList.toggle('bi-heart');">
-                                    <i class="bi bi-heart"></i>
-                                </span>
-
-                                <div>
-                                    <div class="product-thumb-container">
-                                        <img src="<?= $svg_icon; ?>" alt="<?= htmlspecialchars($p['nama_produk']); ?>">
-                                    </div>
-
-                                    <div class="product-card-title-row">
-                                        <h6 class="product-card-name"><?= htmlspecialchars($p['nama_produk']); ?></h6>
-                                        <div class="product-card-price"><?= rupiah($p['harga_jual']); ?></div>
-                                    </div>
-
-                                    <div class="product-card-desc">
-                                        Kategori: <?= htmlspecialchars($p['nama_kategori']); ?> • Satuan kemasan: 1 <?= htmlspecialchars($p['satuan']); ?>. Stok segar harian.
-                                    </div>
-                                </div>
-
-                                <div class="product-card-footer">
-                                    <div class="product-rating">
-                                        <i class="bi bi-star-fill"></i>
-                                        <span>5.0</span>
-                                    </div>
-                                    <button type="button" class="btn-add-to-cart" onclick="addToOrder(<?= $p['id']; ?>, '<?= addslashes(htmlspecialchars($p['nama_produk'])); ?>', <?= $p['harga_jual']; ?>, '<?= addslashes(htmlspecialchars($p['satuan'])); ?>', '<?= $svg_icon; ?>')">
-                                        <i class="bi bi-plus"></i> Add to cart
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </div>
-        </div>
-
-        <!-- Right Order Panel / "My Order" (Exact Match to Image 2 Right Side) -->
-        <aside class="retail-order-pane">
-            <div class="order-header-row">
-                <h4 class="order-header-title">Pesanan Saya</h4>
-                <button type="button" class="btn btn-sm text-danger p-0" onclick="clearCart()" title="Kosongkan Keranjang">
-                    <i class="bi bi-x-circle fs-5"></i>
-                </button>
-            </div>
-
-            <!-- Service Mode Segmented Buttons (Dine In / Pick Up / Delivery) -->
-            <div class="order-segmented-pills">
-                <button type="button" class="order-seg-btn active" id="segAntar" onclick="setServiceType('Antar ke Rumah')">Antar Rumah</button>
-                <button type="button" class="order-seg-btn" id="segAmbil" onclick="setServiceType('Ambil di Toko')">Ambil Sendiri</button>
-            </div>
-
-            <!-- Scrollable Items List -->
-            <div class="order-items-scrollbox" id="cartItemList">
-                <!-- Injected by JavaScript -->
-            </div>
-
-            <!-- Price Breakdown Calculation -->
-            <div class="order-pricing-box">
-                <div class="order-price-row">
-                    <span>Jumlah Belanja (<span id="totalItemCount">0</span> Item)</span>
-                    <span id="subtotalDisplay">Rp 0</span>
-                </div>
-                <div class="order-price-row">
-                    <span>Ongkir Dusun Jaten</span>
-                    <span class="text-success fw-bold">GRATIS</span>
-                </div>
-                <div class="order-price-row total">
-                    <span>Total Pembayaran</span>
-                    <span class="price-val" id="grandTotalDisplay">Rp 0</span>
-                </div>
-            </div>
-
-            <!-- Payments Method Pill Selector (Exact match to Image 2) -->
-            <div class="order-payments-title">Pembayaran</div>
-            <div class="order-payments-row">
-                <div class="payment-type-pill active" id="payPillCash" onclick="setPaymentType('Tunai (Cash / COD)')">Cash</div>
-                <div class="payment-type-pill" id="payPillQRIS" onclick="setPaymentType('QRIS Digital')">QRIS</div>
-            </div>
-
-            <!-- Customer Details Form -->
-            <div class="order-customer-box">
-                <input type="text" id="custName" class="order-input-field" placeholder="Nama Anda (contoh: Ibu Ani)">
-                <input type="text" id="custAddress" class="order-input-field" placeholder="Alamat Rumah (contoh: Jaten RT 02)">
-            </div>
-
-            <!-- Giant Checkout Button (Exact match to Image 2) -->
-            <button type="button" class="btn-checkout-giant" id="btnCheckout" onclick="submitToWhatsApp()" disabled>
-                <span>Pesan Sekarang via WhatsApp</span>
-                <i class="bi bi-arrow-right"></i>
-            </button>
-        </aside>
     </div>
-</div>
+</nav>
 
-<!-- Modal Info Lokasi -->
-<div class="modal fade" id="lokasiModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow-lg rounded-4 p-3">
-            <div class="modal-header border-0 pb-0">
-                <h5 class="fw-bold text-dark mb-0">Lokasi & Jam Buka</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+<!-- Hero -->
+<header class="bg-body-tertiary border-bottom">
+    <div class="container py-5">
+        <div class="row align-items-center g-4">
+            <div class="col-md-7">
+                <span class="badge text-bg-success mb-2">Buka setiap hari 06.00 &ndash; 21.00 WIB</span>
+                <h1 class="display-5 fw-bold">Kebutuhan pokok harian, dekat dan terjangkau.</h1>
+                <p class="lead text-body-secondary">
+                    <?= e($toko['nama_toko']) ?> melayani warga Dusun Jaten dan sekitarnya dengan beras, minyak, gula,
+                    telur, bumbu dapur, dan kebutuhan rumah tangga. Pesan lewat website, kami antar gratis.
+                </p>
+                <a href="#katalog" class="btn btn-primary btn-lg me-2">Mulai Belanja</a>
+                <a href="https://wa.me/<?= e(nomor_wa($toko['telepon'])) ?>" target="_blank" class="btn btn-outline-success btn-lg">
+                    <i class="bi bi-whatsapp me-1"></i> Hubungi Kami
+                </a>
             </div>
-            <div class="modal-body">
-                <div class="p-3 bg-light rounded-3 mb-3">
-                    <strong class="d-block text-dark mb-1">Warung Sembako Toko Najwa</strong>
-                    <div class="text-muted small mb-2"><?= htmlspecialchars($pengaturan['alamat']); ?></div>
-                    <div class="text-dark small"><strong>Pemilik:</strong> <?= htmlspecialchars($pengaturan['pemilik']); ?></div>
-                    <div class="text-dark small"><strong>WhatsApp:</strong> <?= htmlspecialchars($pengaturan['telepon']); ?></div>
-                </div>
-                <div class="p-3 bg-success bg-opacity-10 text-success rounded-3 small">
-                    <i class="bi bi-clock me-1"></i> Buka Setiap Hari: 06.00 WIB - 21.00 WIB
-                </div>
+            <div class="col-md-5 text-center">
+                <?= logo(220) ?>
             </div>
         </div>
+    </div>
+</header>
+
+<!-- Layanan -->
+<section class="container py-5" id="layanan">
+    <div class="row g-3 text-center">
+        <div class="col-md-4">
+            <div class="card h-100"><div class="card-body">
+                <i class="bi bi-truck fs-1 text-primary"></i>
+                <h2 class="h5 mt-2">Antar Gratis</h2>
+                <p class="text-body-secondary mb-0">Pesan-antar tanpa ongkir untuk warga Dusun Jaten dan sekitarnya.</p>
+            </div></div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100"><div class="card-body">
+                <i class="bi bi-qr-code fs-1 text-primary"></i>
+                <h2 class="h5 mt-2">Tunai &amp; QRIS</h2>
+                <p class="text-body-secondary mb-2">Bayar tunai atau scan QRIS dari bank dan dompet digital.</p>
+                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalQris">Lihat QRIS</button>
+            </div></div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100"><div class="card-body">
+                <i class="bi bi-whatsapp fs-1 text-primary"></i>
+                <h2 class="h5 mt-2">Pesan via WhatsApp</h2>
+                <p class="text-body-secondary mb-0">Isi keranjang, klik pesan, dan daftar belanjaan langsung terkirim ke <?= e($toko['pemilik']) ?>.</p>
+            </div></div>
+        </div>
+    </div>
+</section>
+
+<!-- Katalog -->
+<section class="bg-body-tertiary border-top border-bottom py-5" id="katalog">
+    <div class="container">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <h2 class="h3 mb-0">Katalog Sembako</h2>
+            <form method="get" action="#katalog" class="d-flex gap-2">
+                <?php if ($kategori_id > 0): ?><input type="hidden" name="kategori" value="<?= $kategori_id ?>"><?php endif; ?>
+                <input type="search" name="q" class="form-control" placeholder="Cari sembako..." value="<?= e($cari) ?>">
+                <button class="btn btn-outline-primary" type="submit" aria-label="Cari"><i class="bi bi-search"></i></button>
+            </form>
+        </div>
+
+        <div class="d-flex flex-wrap gap-2 mb-4">
+            <a href="?q=<?= urlencode($cari) ?>#katalog" class="btn btn-sm <?= $kategori_id === 0 ? 'btn-primary' : 'btn-outline-primary' ?>">Semua</a>
+            <?php foreach ($daftar_kategori as $k): ?>
+                <a href="?kategori=<?= $k['id'] ?>&q=<?= urlencode($cari) ?>#katalog"
+                   class="btn btn-sm <?= $kategori_id === (int) $k['id'] ? 'btn-primary' : 'btn-outline-primary' ?>"><?= e($k['nama_kategori']) ?></a>
+            <?php endforeach; ?>
+        </div>
+
+        <div class="row g-3">
+            <?php foreach ($daftar_produk as $p): $foto = gambar_produk($p['gambar']); ?>
+                <div class="col-6 col-md-4 col-lg-3">
+                    <div class="card h-100">
+                        <div class="card-body text-center d-flex flex-column">
+                            <img src="<?= $foto ?>" alt="<?= e($p['nama_produk']) ?>" class="foto-produk mx-auto mb-2">
+                            <h3 class="h6"><?= e($p['nama_produk']) ?></h3>
+                            <small class="text-body-secondary mb-2"><?= e($p['nama_kategori']) ?> &middot; per <?= e($p['satuan']) ?></small>
+                            <div class="fw-bold text-primary mt-auto mb-2"><?= rupiah($p['harga_jual']) ?></div>
+                            <button type="button" class="btn btn-sm btn-primary tombol-tambah"
+                                    data-id="<?= $p['id'] ?>" data-nama="<?= e($p['nama_produk']) ?>"
+                                    data-harga="<?= (int) $p['harga_jual'] ?>" data-satuan="<?= e($p['satuan']) ?>"
+                                    data-foto="<?= e($foto) ?>">
+                                <i class="bi bi-plus-lg"></i> Tambah
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+            <?php if (!$daftar_produk): ?>
+                <div class="col-12 text-center text-body-secondary py-5">
+                    <i class="bi bi-basket3 fs-1 d-block"></i>
+                    Sembako yang dicari tidak ditemukan. <a href="index.php#katalog">Tampilkan semua</a>
+                </div>
+            <?php endif; ?>
+        </div>
+    </div>
+</section>
+
+<!-- Lokasi -->
+<section class="container py-5" id="lokasi">
+    <div class="row g-4">
+        <div class="col-md-6">
+            <h2 class="h3">Lokasi &amp; Jam Buka</h2>
+            <ul class="list-unstyled mb-0">
+                <li class="mb-2"><i class="bi bi-geo-alt text-primary me-2"></i><?= e($toko['alamat']) ?></li>
+                <li class="mb-2"><i class="bi bi-person text-primary me-2"></i>Pemilik: <?= e($toko['pemilik']) ?></li>
+                <li class="mb-2"><i class="bi bi-whatsapp text-primary me-2"></i><?= e($toko['telepon']) ?></li>
+                <li><i class="bi bi-clock text-primary me-2"></i>Setiap hari, 06.00 &ndash; 21.00 WIB</li>
+            </ul>
+        </div>
+        <div class="col-md-6">
+            <h2 class="h3">Tentang Website Ini</h2>
+            <p class="text-body-secondary mb-0">
+                Proyek kolaborasi <?= e(INFO_PROYEK['jurusan']) ?> <?= e(INFO_PROYEK['sekolah']) ?>:
+                analisis SWOT dan pengembangan UMKM berbasis digital. Pencatatan kasir, stok, dan
+                kasbon warung kini tersimpan rapi di sistem, bukan lagi di buku tulis.
+            </p>
+        </div>
+    </div>
+</section>
+
+<footer class="border-top py-4 text-center text-body-secondary small">
+    &copy; <?= date('Y') ?> <?= e($toko['nama_toko']) ?> &middot;
+    <?= e(INFO_PROYEK['kelompok']) ?> (<?= e(implode(' & ', INFO_PROYEK['anggota'])) ?>) &middot;
+    <?= e(INFO_PROYEK['sekolah']) ?> TP <?= e(INFO_PROYEK['tahun']) ?>
+</footer>
+
+<!-- Keranjang belanja (panel geser dari kanan) -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="panelKeranjang">
+    <div class="offcanvas-header border-bottom">
+        <h2 class="offcanvas-title h5">Keranjang Belanja</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Tutup"></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column">
+        <ul class="list-group list-group-flush flex-grow-1 overflow-y-auto mb-3" id="daftarKeranjang"></ul>
+
+        <div class="d-flex justify-content-between mb-3">
+            <span class="fw-semibold">Total</span>
+            <span class="h5 mb-0 text-primary" id="totalKeranjang">Rp 0</span>
+        </div>
+
+        <div class="btn-group w-100 mb-3" role="group" aria-label="Cara terima">
+            <input type="radio" class="btn-check" name="layanan" id="layananAntar" value="Antar ke Rumah" checked>
+            <label class="btn btn-outline-secondary" for="layananAntar">Antar ke Rumah</label>
+            <input type="radio" class="btn-check" name="layanan" id="layananAmbil" value="Ambil di Toko">
+            <label class="btn btn-outline-secondary" for="layananAmbil">Ambil di Toko</label>
+        </div>
+        <div class="btn-group w-100 mb-3" role="group" aria-label="Cara bayar">
+            <input type="radio" class="btn-check" name="bayar" id="bayarTunai" value="Tunai (bayar saat terima)" checked>
+            <label class="btn btn-outline-secondary" for="bayarTunai">Tunai</label>
+            <input type="radio" class="btn-check" name="bayar" id="bayarQris" value="QRIS">
+            <label class="btn btn-outline-secondary" for="bayarQris">QRIS</label>
+        </div>
+
+        <input type="text" id="namaPemesan" class="form-control mb-2" placeholder="Nama Anda">
+        <input type="text" id="alamatPemesan" class="form-control mb-3" placeholder="Alamat (contoh: Jaten RT 02)">
+
+        <button type="button" class="btn btn-success w-100" id="tombolPesan" disabled>
+            <i class="bi bi-whatsapp me-1"></i> Pesan via WhatsApp
+        </button>
+        <button type="button" class="btn btn-link text-danger w-100 mt-1" id="tombolKosongkan">Kosongkan keranjang</button>
     </div>
 </div>
 
 <!-- Modal QRIS -->
-<div class="modal fade" id="qrisModal" tabindex="-1">
+<div class="modal fade" id="modalQris" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow-lg rounded-4 p-3 text-center">
-            <div class="modal-header border-0 pb-0">
-                <h5 class="fw-bold text-dark w-100 mb-0">QRIS Resmi Toko Najwa</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <div class="modal-content text-center">
+            <div class="modal-header">
+                <h2 class="modal-title h5">QRIS <?= e($toko['nama_toko']) ?></h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
             </div>
             <div class="modal-body">
-                <img src="assets/img/qris.svg" alt="QRIS" class="img-fluid rounded-4 my-2" style="max-height: 260px;">
-                <p class="text-muted small mb-0">Mendukung pembayaran dari BCA, BRI, Mandiri, GoPay, OVO, ShopeePay & DANA.</p>
+                <img src="<?= gambar_qris() ?>" alt="QRIS" class="img-fluid" style="max-height: 280px;">
+                <p class="text-body-secondary small mt-2 mb-0">Mendukung bank dan dompet digital yang terhubung QRIS.</p>
             </div>
         </div>
     </div>
 </div>
 
-<script src="assets/js/bootstrap.bundle.min.js"></script>
-<script>
-    let orderCart = [];
-    let selectedService = 'Antar ke Rumah';
-    let selectedPayment = 'Tunai (Cash / COD)';
-
-    try {
-        const saved = localStorage.getItem('tokonajwa_order_cart');
-        if (saved) orderCart = JSON.parse(saved);
-    } catch(e) { orderCart = []; }
-
-    function saveOrder() {
-        localStorage.setItem('tokonajwa_order_cart', JSON.stringify(orderCart));
-        renderOrder();
-    }
-
-    function addToOrder(id, name, price, unit, img) {
-        const idx = orderCart.findIndex(i => i.id === id);
-        if (idx > -1) {
-            orderCart[idx].qty++;
-        } else {
-            orderCart.push({ id, name, price, unit, img, qty: 1 });
-        }
-        saveOrder();
-    }
-
-    function changeQty(id, delta) {
-        const idx = orderCart.findIndex(i => i.id === id);
-        if (idx > -1) {
-            orderCart[idx].qty += delta;
-            if (orderCart[idx].qty <= 0) {
-                orderCart.splice(idx, 1);
-            }
-            saveOrder();
-        }
-    }
-
-    function removeOrderItem(id) {
-        orderCart = orderCart.filter(i => i.id !== id);
-        saveOrder();
-    }
-
-    function clearCart() {
-        if (orderCart.length > 0 && confirm('Kosongkan keranjang belanja?')) {
-            orderCart = [];
-            saveOrder();
-        }
-    }
-
-    function setServiceType(type) {
-        selectedService = type;
-        document.getElementById('segAntar').classList.toggle('active', type === 'Antar ke Rumah');
-        document.getElementById('segAmbil').classList.toggle('active', type === 'Ambil di Toko');
-    }
-
-    function setPaymentType(type) {
-        selectedPayment = type;
-        document.getElementById('payPillCash').classList.toggle('active', type.includes('Tunai'));
-        document.getElementById('payPillQRIS').classList.toggle('active', type.includes('QRIS'));
-    }
-
-    function formatRp(num) {
-        return 'Rp ' + Number(num).toLocaleString('id-ID');
-    }
-
-    function renderOrder() {
-        const container = document.getElementById('cartItemList');
-        const countDisplay = document.getElementById('totalItemCount');
-        const subtotalDisplay = document.getElementById('subtotalDisplay');
-        const grandTotalDisplay = document.getElementById('grandTotalDisplay');
-        const btnCheckout = document.getElementById('btnCheckout');
-
-        const totalQty = orderCart.reduce((sum, item) => sum + item.qty, 0);
-        const totalAmount = orderCart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-
-        countDisplay.textContent = totalQty;
-        subtotalDisplay.textContent = formatRp(totalAmount);
-        grandTotalDisplay.textContent = formatRp(totalAmount);
-
-        btnCheckout.disabled = (orderCart.length === 0);
-
-        if (orderCart.length === 0) {
-            container.innerHTML = `
-                <div class="py-5 text-center text-muted">
-                    <i class="bi bi-cart3 fs-2 d-block mb-1 opacity-50"></i>
-                    <small class="d-block fw-semibold">Keranjang Masih Kosong</small>
-                    <small class="text-muted" style="font-size: 0.72rem;">Pilih sembako di sebelah kiri.</small>
-                </div>
-            `;
-            return;
-        }
-
-        let html = '';
-        orderCart.forEach(item => {
-            const sub = item.price * item.qty;
-            html += `
-                <div class="order-item-card">
-                    <div class="order-item-thumb">
-                        <img src="${item.img}" alt="${item.name}">
-                    </div>
-                    <div class="order-item-info">
-                        <h6 class="order-item-name">${item.name}</h6>
-                        <span class="order-item-price">${formatRp(item.price)}</span>
-                    </div>
-                    <div class="order-item-qty-box">
-                        <button type="button" class="order-qty-btn" onclick="changeQty(${item.id}, -1)">-</button>
-                        <span class="order-qty-num">${item.qty < 10 ? '0' + item.qty : item.qty}</span>
-                        <button type="button" class="order-qty-btn" onclick="changeQty(${item.id}, 1)">+</button>
-                    </div>
-                    <button type="button" class="order-item-trash" onclick="removeOrderItem(${item.id})" title="Hapus">
-                        <i class="bi bi-trash"></i>
-                    </button>
-                </div>
-            `;
-        });
-        container.innerHTML = html;
-    }
-
-    function submitToWhatsApp() {
-        if (orderCart.length === 0) {
-            alert('Keranjang belanja Anda masih kosong!');
-            return;
-        }
-
-        const name = document.getElementById('custName').value.trim();
-        const address = document.getElementById('custAddress').value.trim();
-
-        if (!name) {
-            alert('Silakan tulis nama Anda!');
-            document.getElementById('custName').focus();
-            return;
-        }
-        if (!address) {
-            alert('Silakan tulis alamat rumah Anda!');
-            document.getElementById('custAddress').focus();
-            return;
-        }
-
-        const ownerPhone = "<?= preg_replace('/[^0-9]/', '', $pengaturan['telepon']); ?>";
-        let message = `*PESANAN BELANJA SEMBAKO - TOKO NAJWA*\n\n`;
-        message += `Halo Bu Dhiyah, saya mau pesan sembako:\n`;
-        message += `Layanan: *${selectedService}*\n\n`;
-
-        let total = 0;
-        orderCart.forEach((item, idx) => {
-            const sub = item.price * item.qty;
-            total += sub;
-            message += `${idx + 1}. *${item.name}*\n   ${item.qty} ${item.unit} x ${formatRp(item.price)} = ${formatRp(sub)}\n`;
-        });
-
-        message += `\n*TOTAL PEMBAYARAN: ${formatRp(total)}*\n`;
-        message += `-------------------------\n`;
-        message += `*Pemesan:* ${name}\n`;
-        message += `*Alamat:* ${address}\n`;
-        message += `*Metode Bayar:* ${selectedPayment}\n\n`;
-        message += `Mohon segera diantar ya Bu Dhiyah. Terima kasih banyak!`;
-
-        const waUrl = `https://wa.me/${ownerPhone}?text=${encodeURIComponent(message)}`;
-        window.open(waUrl, '_blank');
-    }
-
-    renderOrder();
-</script>
-
+<script src="<?= url('assets/vendor/bootstrap/js/bootstrap.bundle.min.js') ?>"></script>
+<script src="<?= url('assets/js/katalog.js') ?>"></script>
 </body>
 </html>

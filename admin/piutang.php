@@ -1,353 +1,243 @@
 <?php
-// admin/piutang.php - Buku Kasbon & Piutang Warga (Clean Retail Style)
-$page_title = 'Buku Kasbon Warga';
-require_once __DIR__ . '/header.php';
+// admin/piutang.php - Buku kasbon: utang warga, cicilan, dan pelunasan.
+require_once __DIR__ . '/../includes/init_admin.php';
 
-// Handle Tambah Utang / Bayar Cicilan / Hapus
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = $_POST['action'] ?? '';
+/* ---------- Proses form ---------- */
+if (is_post()) {
+    $aksi = post('aksi');
 
-    if ($action === 'tambah') {
-        $nama        = trim($_POST['nama_pelanggan'] ?? '');
-        $telp        = trim($_POST['no_telepon'] ?? '');
-        $nominal     = (float)($_POST['nominal_utang'] ?? 0);
-        $tgl_utang   = !empty($_POST['tgl_utang']) ? $_POST['tgl_utang'] : date('Y-m-d');
-        $jatuh_tempo = !empty($_POST['tgl_jatuh_tempo']) ? $_POST['tgl_jatuh_tempo'] : null;
-        $catatan     = trim($_POST['catatan'] ?? '');
+    if ($aksi === 'tambah') {
+        $nama    = post('nama_pelanggan');
+        $nominal = (float) post('total_utang');
 
-        if (empty($nama) || $nominal <= 0) {
-            set_flash('danger', 'Nama pelanggan dan nominal kasbon wajib diisi!');
+        if ($nama === '' || $nominal <= 0) {
+            set_flash('danger', 'Nama warga dan nominal kasbon wajib diisi.');
         } else {
-            $stmt = $koneksi->prepare("INSERT INTO piutang (nama_pelanggan, no_telepon, total_utang, sisa_utang, tgl_utang, tgl_jatuh_tempo, status, catatan) VALUES (?, ?, ?, ?, ?, ?, 'belum_lunas', ?)");
-            $stmt->bind_param("ssddsss", $nama, $telp, $nominal, $nominal, $tgl_utang, $jatuh_tempo, $catatan);
-            $stmt->execute();
-            set_flash('success', 'Catatan kasbon warga berhasil disimpan.');
+            jalankan(
+                "INSERT INTO piutang (nama_pelanggan, no_telepon, total_utang, sisa_utang, tgl_utang, tgl_jatuh_tempo, catatan)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                'ssddsss',
+                [$nama, post('no_telepon'), $nominal, $nominal, post('tgl_utang', date('Y-m-d')),
+                 tanggal_atau_null(post('tgl_jatuh_tempo')), post('catatan')]
+            );
+            set_flash('success', 'Kasbon baru berhasil dicatat.');
         }
-        header("Location: piutang.php");
-        exit;
-    }
+    } elseif ($aksi === 'bayar') {
+        $id     = (int) post('piutang_id');
+        $jumlah = (float) post('jumlah_bayar');
+        $utang  = ambil_satu('SELECT * FROM piutang WHERE id = ?', 'i', [$id]);
 
-    if ($action === 'bayar') {
-        $piutang_id   = (int)($_POST['piutang_id'] ?? 0);
-        $jumlah_bayar = (float)($_POST['jumlah_bayar'] ?? 0);
-        $metode       = $_POST['metode'] ?? 'tunai';
-        $catatan_bayar = trim($_POST['catatan_bayar'] ?? 'Pembayaran kasbon');
-
-        if ($piutang_id <= 0 || $jumlah_bayar <= 0) {
-            set_flash('danger', 'Jumlah pembayaran tidak valid!');
+        if (!$utang || $jumlah <= 0) {
+            set_flash('danger', 'Jumlah pembayaran tidak valid.');
+        } elseif ($jumlah > $utang['sisa_utang']) {
+            set_flash('danger', 'Pembayaran melebihi sisa utang (' . rupiah($utang['sisa_utang']) . ').');
         } else {
-            $cek = $koneksi->query("SELECT * FROM piutang WHERE id = $piutang_id")->fetch_assoc();
-            if ($cek) {
-                if ($jumlah_bayar > $cek['sisa_utang']) {
-                    set_flash('danger', 'Jumlah pembayaran melebihi sisa utang (' . rupiah($cek['sisa_utang']) . ')!');
-                } else {
-                    $koneksi->begin_transaction();
-                    try {
-                        $stmt_p = $koneksi->prepare("INSERT INTO piutang_pembayaran (piutang_id, tgl_bayar, jumlah_bayar, metode, catatan) VALUES (?, NOW(), ?, ?, ?)");
-                        $stmt_p->bind_param("idss", $piutang_id, $jumlah_bayar, $metode, $catatan_bayar);
-                        $stmt_p->execute();
-
-                        $sisa_baru = $cek['sisa_utang'] - $jumlah_bayar;
-                        $status_baru = ($sisa_baru <= 0) ? 'lunas' : 'belum_lunas';
-
-                        $upd = $koneksi->prepare("UPDATE piutang SET sisa_utang = ?, status = ? WHERE id = ?");
-                        $upd->bind_param("dsi", $sisa_baru, $status_baru, $piutang_id);
-                        $upd->execute();
-
-                        $koneksi->commit();
-                        set_flash('success', 'Pembayaran sebesar ' . rupiah($jumlah_bayar) . ' berhasil dicatat.');
-                    } catch (Exception $e) {
-                        $koneksi->rollback();
-                        set_flash('danger', 'Gagal memproses pembayaran: ' . $e->getMessage());
-                    }
-                }
+            $db = db();
+            $db->begin_transaction();
+            try {
+                $sisa = $utang['sisa_utang'] - $jumlah;
+                jalankan(
+                    'INSERT INTO piutang_pembayaran (piutang_id, jumlah_bayar, metode, catatan) VALUES (?, ?, ?, ?)',
+                    'idss', [$id, $jumlah, post('metode', 'tunai'), $sisa > 0 ? 'Cicilan' : 'Pelunasan']
+                );
+                jalankan(
+                    'UPDATE piutang SET sisa_utang = ?, status = ? WHERE id = ?',
+                    'dsi', [$sisa, $sisa > 0 ? 'belum_lunas' : 'lunas', $id]
+                );
+                $db->commit();
+                set_flash('success', 'Pembayaran ' . rupiah($jumlah) . ' berhasil dicatat.');
+            } catch (Exception $e) {
+                $db->rollback();
+                set_flash('danger', 'Gagal memproses pembayaran: ' . $e->getMessage());
             }
         }
-        header("Location: piutang.php");
-        exit;
+    } elseif ($aksi === 'hapus') {
+        jalankan('DELETE FROM piutang WHERE id = ?', 'i', [(int) post('id')]);
+        set_flash('success', 'Catatan kasbon dihapus.');
     }
-
-    if ($action === 'hapus') {
-        $id = (int)($_POST['id'] ?? 0);
-        $stmt = $koneksi->prepare("DELETE FROM piutang WHERE id = ?");
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        set_flash('success', 'Catatan kasbon berhasil dihapus.');
-        header("Location: piutang.php");
-        exit;
-    }
+    redirect('piutang.php');
 }
 
-// Filter status
-$status_filter = $_GET['status'] ?? 'belum_lunas';
-$search_q = trim($_GET['q'] ?? '');
+/* ---------- Ambil data ---------- */
+$status = get('status', 'belum_lunas');   // belum_lunas | lunas | semua
+$cari   = get('q');
 
-$sql = "SELECT p.* FROM piutang p WHERE 1=1";
-$params = [];
-$types = "";
-
-if ($status_filter !== 'semua') {
-    $sql .= " AND p.status = ?";
-    $params[] = $status_filter;
-    $types .= "s";
+$sql   = 'SELECT * FROM piutang WHERE 1=1';
+$tipe  = '';
+$param = [];
+if ($status !== 'semua') {
+    $sql .= ' AND status = ?';
+    $tipe .= 's';
+    $param[] = $status;
 }
-
-if (!empty($search_q)) {
-    $sql .= " AND (p.nama_pelanggan LIKE ? OR p.catatan LIKE ?)";
-    $like = "%$search_q%";
-    $params[] = $like;
-    $params[] = $like;
-    $types .= "ss";
+if ($cari !== '') {
+    $sql .= ' AND (nama_pelanggan LIKE ? OR catatan LIKE ?)';
+    $tipe .= 'ss';
+    $param[] = "%$cari%";
+    $param[] = "%$cari%";
 }
+$daftar_piutang = ambil_semua($sql . ' ORDER BY status ASC, tgl_utang DESC', $tipe, $param);
 
-$sql .= " ORDER BY p.status ASC, p.tgl_utang DESC";
+$total_sisa      = ambil_nilai("SELECT COALESCE(SUM(sisa_utang), 0) FROM piutang WHERE status = 'belum_lunas'");
+$total_terbayar  = ambil_nilai('SELECT COALESCE(SUM(jumlah_bayar), 0) FROM piutang_pembayaran');
+$toko            = pengaturan_toko();
 
-$stmt = $koneksi->prepare($sql);
-if (!empty($params)) {
-    $stmt->bind_param($types, ...$params);
-}
-$stmt->execute();
-$piutang_list = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-
-$total_belum_lunas = $koneksi->query("SELECT COALESCE(SUM(sisa_utang), 0) FROM piutang WHERE status = 'belum_lunas'")->fetch_row()[0];
-$total_telah_dibayar = $koneksi->query("SELECT COALESCE(SUM(jumlah_bayar), 0) FROM piutang_pembayaran")->fetch_row()[0];
+/* ---------- Tampilan ---------- */
+$judul_halaman  = 'Buku Kasbon';
+$menu_aktif     = 'piutang';
+$skrip_tambahan = ['piutang.js'];
+include __DIR__ . '/../includes/layout/admin_top.php';
 ?>
 
-<div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
     <div>
-        <h4 class="fw-bold text-dark mb-1">Buku Kasbon & Piutang Warga</h4>
-        <p class="text-muted small mb-0">Digitalisasi buku utang harian manual warga untuk mencegah catatan terselip atau rusak.</p>
+        <h1 class="h3 mb-0">Buku Kasbon</h1>
+        <p class="text-body-secondary mb-0">Pengganti buku utang manual agar catatan tidak terselip atau hilang.</p>
     </div>
-    <button type="button" class="btn btn-pill-green shadow-sm" data-bs-toggle="modal" data-bs-target="#modalTambahUtang">
-        <i class="bi bi-plus-lg"></i>
-        <span>Catat Kasbon Baru</span>
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalKasbon">
+        <i class="bi bi-plus-lg me-1"></i> Catat Kasbon
     </button>
 </div>
 
-<!-- 2 Kartu Ringkasan -->
-<div class="row g-3 mb-4">
-    <div class="col-md-6">
-        <div class="bento-card-clean">
-            <span class="small text-muted fw-semibold d-block mb-1">Total Sisa Kasbon Belum Lunas</span>
-            <h3 class="fw-bold text-danger mb-0"><?= rupiah($total_belum_lunas); ?></h3>
-            <small class="text-muted" style="font-size: 0.72rem;">Harus ditagih saat jatuh tempo</small>
-        </div>
-    </div>
-    <div class="col-md-6">
-        <div class="bento-card-clean">
-            <span class="small text-muted fw-semibold d-block mb-1">Total Cicilan & Pelunasan Masuk</span>
-            <h3 class="fw-bold text-success mb-0"><?= rupiah($total_telah_dibayar); ?></h3>
-            <small class="text-muted" style="font-size: 0.72rem;">Uang kasbon yang sudah dilunasi warga</small>
-        </div>
-    </div>
+<div class="row g-3 mb-3">
+    <div class="col-md-6"><div class="card card-body"><div class="text-body-secondary small">Sisa kasbon belum lunas</div><div class="h4 mb-0 text-danger"><?= rupiah($total_sisa) ?></div></div></div>
+    <div class="col-md-6"><div class="card card-body"><div class="text-body-secondary small">Total cicilan &amp; pelunasan masuk</div><div class="h4 mb-0 text-success"><?= rupiah($total_terbayar) ?></div></div></div>
 </div>
 
-<!-- Filter Box -->
-<div class="bento-card-clean mb-4 p-3">
-    <form method="GET" action="piutang.php" class="row g-2 align-items-center">
-        <div class="col-md-6">
-            <input type="text" name="q" class="form-control form-control-sm rounded-pill px-3" placeholder="Cari nama warga / catatan..." value="<?= htmlspecialchars($search_q); ?>">
-        </div>
+<form method="get" class="card card-body mb-3">
+    <div class="row g-2">
+        <div class="col-md-6"><input type="search" name="q" class="form-control" placeholder="Cari nama warga / catatan" value="<?= e($cari) ?>"></div>
         <div class="col-md-4">
-            <select name="status" class="form-select form-select-sm rounded-pill px-3">
-                <option value="belum_lunas" <?= ($status_filter === 'belum_lunas') ? 'selected' : ''; ?>>Belum Lunas (Masih Ada Utang)</option>
-                <option value="lunas" <?= ($status_filter === 'lunas') ? 'selected' : ''; ?>>Sudah Lunas</option>
-                <option value="semua" <?= ($status_filter === 'semua') ? 'selected' : ''; ?>>Semua Catatan</option>
+            <select name="status" class="form-select">
+                <option value="belum_lunas" <?= $status === 'belum_lunas' ? 'selected' : '' ?>>Belum lunas</option>
+                <option value="lunas" <?= $status === 'lunas' ? 'selected' : '' ?>>Sudah lunas</option>
+                <option value="semua" <?= $status === 'semua' ? 'selected' : '' ?>>Semua</option>
             </select>
         </div>
-        <div class="col-md-2 d-flex gap-1">
-            <button type="submit" class="btn btn-sm btn-pill-green py-1 px-3 w-100"><i class="bi bi-funnel"></i></button>
-            <a href="piutang.php" class="btn btn-sm btn-pill-white py-1 px-2" title="Reset"><i class="bi bi-arrow-counterclockwise"></i></a>
-        </div>
-    </form>
-</div>
+        <div class="col-md-2 d-grid"><button class="btn btn-outline-primary" type="submit">Terapkan</button></div>
+    </div>
+</form>
 
-<!-- Table Piutang -->
-<div class="bento-card-clean p-0 overflow-hidden">
+<div class="card">
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
-            <thead class="table-light small">
-                <tr>
-                    <th class="ps-4" style="width: 50px;">#</th>
-                    <th>Nama Warga</th>
-                    <th>Tgl Kasbon</th>
-                    <th>Jatuh Tempo</th>
-                    <th class="text-end">Total Utang</th>
-                    <th class="text-end">Sisa Utang</th>
-                    <th class="text-center">Status</th>
-                    <th class="text-center pe-4" style="width: 140px;">Aksi</th>
-                </tr>
+            <thead class="table-light">
+                <tr><th>Warga</th><th>Tgl Utang</th><th>Jatuh Tempo</th><th class="text-end">Total</th><th class="text-end">Sisa</th><th>Status</th><th class="text-end">Aksi</th></tr>
             </thead>
             <tbody>
-                <?php if (empty($piutang_list)): ?>
+                <?php foreach ($daftar_piutang as $p):
+                    $terlambat = $p['status'] === 'belum_lunas' && $p['tgl_jatuh_tempo'] && $p['tgl_jatuh_tempo'] < date('Y-m-d');
+                    $pesan_wa = "Halo {$p['nama_pelanggan']}, salam dari {$toko['nama_toko']}. Mengingatkan kasbon sembako sebesar "
+                              . rupiah($p['sisa_utang']) . ", mohon diselesaikan saat longgar ya. Terima kasih!";
+                ?>
                     <tr>
-                        <td colspan="8" class="text-center py-5 text-muted small">
-                            <i class="bi bi-journal-check fs-2 d-block mb-1"></i>
-                            Tidak ada data kasbon.
+                        <td><div class="fw-semibold"><?= e($p['nama_pelanggan']) ?></div><small class="text-body-secondary"><?= e($p['catatan']) ?></small></td>
+                        <td class="text-nowrap"><?= date('d/m/Y', strtotime($p['tgl_utang'])) ?></td>
+                        <td class="text-nowrap">
+                            <?= $p['tgl_jatuh_tempo'] ? date('d/m/Y', strtotime($p['tgl_jatuh_tempo'])) : '-' ?>
+                            <?php if ($terlambat): ?><span class="badge text-bg-danger">Terlambat</span><?php endif; ?>
+                        </td>
+                        <td class="text-end"><?= rupiah($p['total_utang']) ?></td>
+                        <td class="text-end fw-semibold <?= $p['sisa_utang'] > 0 ? 'text-danger' : 'text-success' ?>"><?= rupiah($p['sisa_utang']) ?></td>
+                        <td><span class="badge <?= $p['status'] === 'lunas' ? 'text-bg-success' : 'text-bg-danger' ?>"><?= $p['status'] === 'lunas' ? 'Lunas' : 'Belum lunas' ?></span></td>
+                        <td class="text-end text-nowrap">
+                            <?php if ($p['status'] === 'belum_lunas'): ?>
+                                <button type="button" class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#modalBayar"
+                                        data-piutang_id="<?= $p['id'] ?>" data-jumlah_bayar="<?= (int) $p['sisa_utang'] ?>"
+                                        data-nama="<?= e($p['nama_pelanggan']) ?>" data-sisa="<?= (int) $p['sisa_utang'] ?>">Bayar</button>
+                                <?php if ($p['no_telepon']): ?>
+                                    <a class="btn btn-sm btn-outline-success" target="_blank" title="Ingatkan lewat WhatsApp"
+                                       href="https://wa.me/<?= nomor_wa($p['no_telepon']) ?>?text=<?= urlencode($pesan_wa) ?>"><i class="bi bi-whatsapp"></i></a>
+                                <?php endif; ?>
+                            <?php endif; ?>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" data-riwayat="<?= $p['id'] ?>" title="Riwayat cicilan"><i class="bi bi-clock-history"></i></button>
+                            <form method="post" class="d-inline" data-konfirmasi="Hapus catatan kasbon <?= e($p['nama_pelanggan']) ?>?">
+                                <?= csrf_field() ?>
+                                <input type="hidden" name="aksi" value="hapus">
+                                <input type="hidden" name="id" value="<?= $p['id'] ?>">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Hapus"><i class="bi bi-trash"></i></button>
+                            </form>
                         </td>
                     </tr>
-                <?php else: ?>
-                    <?php foreach ($piutang_list as $idx => $pi): ?>
-                        <tr>
-                            <td class="ps-4 text-muted small"><?= $idx + 1; ?></td>
-                            <td>
-                                <strong class="d-block text-dark small"><?= htmlspecialchars($pi['nama_pelanggan']); ?></strong>
-                                <small class="text-muted" style="font-size: 0.72rem;"><?= htmlspecialchars($pi['catatan'] ?? '-'); ?></small>
-                            </td>
-                            <td><small class="text-muted"><?= date('d/m/Y', strtotime($pi['tgl_utang'])); ?></small></td>
-                            <td>
-                                <small class="text-muted"><?= $pi['tgl_jatuh_tempo'] ? date('d/m/Y', strtotime($pi['tgl_jatuh_tempo'])) : '-'; ?></small>
-                            </td>
-                            <td class="text-end small text-muted"><?= rupiah($pi['total_utang']); ?></td>
-                            <td class="text-end">
-                                <strong class="<?= ($pi['sisa_utang'] > 0) ? 'text-danger' : 'text-success'; ?> small">
-                                    <?= rupiah($pi['sisa_utang']); ?>
-                                </strong>
-                            </td>
-                            <td class="text-center">
-                                <?php if ($pi['status'] === 'lunas'): ?>
-                                    <span class="badge bg-success bg-opacity-10 text-success rounded-pill">Lunas</span>
-                                <?php else: ?>
-                                    <span class="badge bg-danger rounded-pill">Belum Lunas</span>
-                                <?php endif; ?>
-                            </td>
-                            <td class="text-center pe-4">
-                                <div class="btn-group btn-group-sm">
-                                    <?php if ($pi['status'] === 'belum_lunas'): ?>
-                                        <button type="button" class="btn btn-sm btn-success rounded-pill px-2 py-0" onclick="bukaModalBayar(<?= $pi['id']; ?>, '<?= addslashes(htmlspecialchars($pi['nama_pelanggan'])); ?>', <?= $pi['sisa_utang']; ?>)" title="Bayar Cicilan">
-                                            Bayar
-                                        </button>
-                                    <?php endif; ?>
-
-                                    <?php if (!empty($pi['no_telepon']) && $pi['status'] === 'belum_lunas'): ?>
-                                        <a href="https://wa.me/<?= preg_replace('/[^0-9]/', '', $pi['no_telepon']); ?>?text=<?= urlencode("Halo " . $pi['nama_pelanggan'] . ", salam dari Toko Najwa (Bu Dhiyah). Mengingatkan catatan kasbon sembako sebesar " . rupiah($pi['sisa_utang']) . " dapat diselesaikan saat longgar ya. Terima kasih!"); ?>" target="_blank" class="btn btn-sm btn-outline-success border-0" title="Kirim WA">
-                                            <i class="bi bi-whatsapp"></i>
-                                        </a>
-                                    <?php endif; ?>
-
-                                    <button type="button" class="btn btn-sm btn-outline-danger border-0" onclick="konfirmasiHapus(<?= $pi['id']; ?>, '<?= addslashes(htmlspecialchars($pi['nama_pelanggan'])); ?>')" title="Hapus">
-                                        <i class="bi bi-trash"></i>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
+                <?php endforeach; ?>
+                <?php if (!$daftar_piutang): ?>
+                    <tr><td colspan="7" class="text-center text-body-secondary py-5">Tidak ada data kasbon.</td></tr>
                 <?php endif; ?>
             </tbody>
         </table>
     </div>
 </div>
 
-<!-- Modal Tambah Kasbon -->
-<div class="modal fade" id="modalTambahUtang" tabindex="-1">
+<!-- Modal catat kasbon -->
+<div class="modal fade" id="modalKasbon" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow-lg rounded-4">
-            <div class="modal-header border-bottom py-3">
-                <h5 class="modal-title fw-bold text-dark"><i class="bi bi-journal-plus text-warning me-2"></i>Catat Kasbon Baru</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <form method="post" class="modal-content">
+            <?= csrf_field() ?>
+            <input type="hidden" name="aksi" value="tambah">
+            <div class="modal-header"><h2 class="modal-title h5">Catat Kasbon Baru</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button></div>
+            <div class="modal-body">
+                <div class="mb-3"><label class="form-label">Nama warga</label>
+                    <input type="text" name="nama_pelanggan" class="form-control" required></div>
+                <div class="mb-3"><label class="form-label">Nomor WhatsApp (opsional)</label>
+                    <input type="text" name="no_telepon" class="form-control" placeholder="08xxxxxxxxxx"></div>
+                <div class="mb-3"><label class="form-label">Nominal kasbon</label>
+                    <div class="input-group"><span class="input-group-text">Rp</span>
+                        <input type="number" name="total_utang" class="form-control" min="1000" required></div></div>
+                <div class="row g-2 mb-3">
+                    <div class="col-6"><label class="form-label">Tanggal utang</label>
+                        <input type="date" name="tgl_utang" class="form-control" value="<?= date('Y-m-d') ?>" required></div>
+                    <div class="col-6"><label class="form-label">Jatuh tempo</label>
+                        <input type="date" name="tgl_jatuh_tempo" class="form-control" value="<?= date('Y-m-d', strtotime('+14 days')) ?>"></div>
+                </div>
+                <div><label class="form-label">Keterangan barang</label>
+                    <input type="text" name="catatan" class="form-control" placeholder="Contoh: Beras 5kg + minyak 1L"></div>
             </div>
-            <form method="POST" action="piutang.php">
-                <input type="hidden" name="action" value="tambah">
-                <div class="modal-body p-4">
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold text-muted">Nama Warga</label>
-                        <input type="text" name="nama_pelanggan" class="form-control rounded-pill px-3" placeholder="Contoh: Pak Budi RT 02" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold text-muted">Nomor WhatsApp (Opsional)</label>
-                        <input type="text" name="no_telepon" class="form-control rounded-pill px-3" placeholder="08xxxxxxxx">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold text-muted">Nominal Kasbon (Rp)</label>
-                        <input type="number" name="nominal_utang" class="form-control rounded-pill px-3" placeholder="0" min="1000" required>
-                    </div>
-                    <div class="row g-2 mb-3">
-                        <div class="col-6">
-                            <label class="form-label small fw-semibold text-muted">Tanggal Utang</label>
-                            <input type="date" name="tgl_utang" class="form-control rounded-pill px-3" value="<?= date('Y-m-d'); ?>" required>
-                        </div>
-                        <div class="col-6">
-                            <label class="form-label small fw-semibold text-muted">Jatuh Tempo</label>
-                            <input type="date" name="tgl_jatuh_tempo" class="form-control rounded-pill px-3" value="<?= date('Y-m-d', strtotime('+14 days')); ?>">
-                        </div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label small fw-semibold text-muted">Keterangan Barang</label>
-                        <input type="text" name="catatan" class="form-control rounded-pill px-3" placeholder="Contoh: Beras 5kg + Minyak 1L">
-                    </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+                <button type="submit" class="btn btn-primary">Simpan</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal bayar cicilan -->
+<div class="modal fade" id="modalBayar" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <form method="post" class="modal-content">
+            <?= csrf_field() ?>
+            <input type="hidden" name="aksi" value="bayar">
+            <input type="hidden" name="piutang_id">
+            <div class="modal-header"><h2 class="modal-title h5">Bayar Cicilan / Pelunasan</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button></div>
+            <div class="modal-body">
+                <div class="alert alert-secondary">
+                    <div>Warga: <strong id="bayarNama"></strong></div>
+                    <div>Sisa utang: <strong id="bayarSisa" class="text-danger"></strong></div>
                 </div>
-                <div class="modal-footer border-top bg-light">
-                    <button type="button" class="btn btn-pill-white" data-bs-dismiss="modal">Batal</button>
-                    <button type="submit" class="btn btn-pill-green">Simpan Kasbon</button>
-                </div>
-            </form>
+                <div class="mb-3"><label class="form-label">Jumlah dibayar</label>
+                    <div class="input-group"><span class="input-group-text">Rp</span>
+                        <input type="number" name="jumlah_bayar" class="form-control" min="1" required></div></div>
+                <div><label class="form-label">Metode</label>
+                    <select name="metode" class="form-select"><option value="tunai">Tunai</option><option value="qris">QRIS</option></select></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+                <button type="submit" class="btn btn-success">Proses Pembayaran</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal riwayat cicilan -->
+<div class="modal fade" id="modalRiwayat" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header"><h2 class="modal-title h5">Riwayat Cicilan</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button></div>
+            <div class="modal-body" id="isiRiwayat"></div>
         </div>
     </div>
 </div>
 
-<!-- Modal Bayar Cicilan -->
-<div class="modal fade" id="modalBayarCicilan" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow-lg rounded-4">
-            <div class="modal-header border-bottom py-3">
-                <h5 class="modal-title fw-bold text-dark"><i class="bi bi-cash-coin text-success me-2"></i>Bayar Cicilan / Pelunasan</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <form method="POST" action="piutang.php">
-                <input type="hidden" name="action" value="bayar">
-                <input type="hidden" name="piutang_id" id="bayar_piutang_id">
-                <div class="modal-body p-4">
-                    <div class="p-3 bg-light rounded-4 mb-3 border">
-                        <small class="text-muted d-block">Pembeli:</small>
-                        <strong id="bayar_nama" class="text-dark fs-6 d-block mb-1"></strong>
-                        <small class="text-muted d-block">Sisa Tagihan:</small>
-                        <strong id="bayar_sisa_display" class="text-danger fs-5"></strong>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold text-muted">Jumlah yang Dibayarkan (Rp)</label>
-                        <input type="number" name="jumlah_bayar" id="bayar_jumlah" class="form-control rounded-pill px-3 fs-5 fw-bold text-success" required>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label small fw-semibold text-muted">Metode Pembayaran</label>
-                        <select name="metode" class="form-select rounded-pill px-3">
-                            <option value="tunai">Tunai (Cash)</option>
-                            <option value="qris">Scan QRIS</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="modal-footer border-top bg-light">
-                    <button type="button" class="btn btn-pill-white" data-bs-dismiss="modal">Batal</button>
-                    <button type="submit" class="btn btn-pill-green">Proses Pembayaran</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-<form id="formHapus" method="POST" action="piutang.php" style="display:none;">
-    <input type="hidden" name="action" value="hapus">
-    <input type="hidden" name="id" id="hapus_id">
-</form>
-
-<script>
-    function bukaModalBayar(id, nama, sisa) {
-        document.getElementById('bayar_piutang_id').value = id;
-        document.getElementById('bayar_nama').textContent = nama;
-        document.getElementById('bayar_sisa_display').textContent = 'Rp ' + Number(sisa).toLocaleString('id-ID');
-        document.getElementById('bayar_jumlah').value = sisa;
-        document.getElementById('bayar_jumlah').max = sisa;
-
-        new bootstrap.Modal(document.getElementById('modalBayarCicilan')).show();
-    }
-
-    function konfirmasiHapus(id, nama) {
-        if (confirm('Yakin ingin menghapus catatan kasbon: "' + nama + '"?')) {
-            document.getElementById('hapus_id').value = id;
-            document.getElementById('formHapus').submit();
-        }
-    }
-</script>
-
-<?php require_once __DIR__ . '/footer.php'; ?>
+<?php include __DIR__ . '/../includes/layout/admin_bottom.php'; ?>

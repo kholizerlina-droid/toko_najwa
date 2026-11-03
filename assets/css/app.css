@@ -1,0 +1,119 @@
+/* assets/css/app.css
+   Tampilan memakai Bootstrap murni. File ini hanya berisi:
+   1. Warna biru pastel (menimpa warna biru bawaan Bootstrap)
+   2. Beberapa hal kecil yang tidak tersedia di Bootstrap */
+
+/* ---------- 1. TEMA BIRU PASTEL ----------
+   Ubah warna cukup di sini. Tombol memakai latar pastel dengan teks biru tua
+   supaya tetap mudah dibaca. */
+:root {
+    --pastel-biru:        #a9c9ee;   /* latar tombol & lencana */
+    --pastel-biru-hover:  #95bbe8;
+    --pastel-biru-aktif:  #86b0e3;
+    --pastel-biru-muda:   #e3eefb;   /* latar lembut (menu aktif, sorotan) */
+    --biru-teks:          #4a78b0;   /* teks, ikon, tautan */
+    --biru-tua:           #1d3557;   /* teks di atas latar pastel */
+
+    --bs-primary: var(--biru-teks);
+    --bs-primary-rgb: 74, 120, 176;
+    --bs-primary-bg-subtle: var(--pastel-biru-muda);
+    --bs-primary-border-subtle: var(--pastel-biru);
+    --bs-primary-text-emphasis: #2c4a73;
+    --bs-link-color: var(--biru-teks);
+    --bs-link-color-rgb: 74, 120, 176;
+    --bs-link-hover-color: #365d8d;
+    --bs-link-hover-color-rgb: 54, 93, 141;
+}
+
+.btn-primary {
+    --bs-btn-color: var(--biru-tua);
+    --bs-btn-bg: var(--pastel-biru);
+    --bs-btn-border-color: var(--pastel-biru);
+    --bs-btn-hover-color: var(--biru-tua);
+    --bs-btn-hover-bg: var(--pastel-biru-hover);
+    --bs-btn-hover-border-color: var(--pastel-biru-hover);
+    --bs-btn-active-color: var(--biru-tua);
+    --bs-btn-active-bg: var(--pastel-biru-aktif);
+    --bs-btn-active-border-color: var(--pastel-biru-aktif);
+    --bs-btn-disabled-color: var(--biru-tua);
+    --bs-btn-disabled-bg: var(--pastel-biru);
+    --bs-btn-disabled-border-color: var(--pastel-biru);
+    --bs-btn-focus-shadow-rgb: 169, 201, 238;
+}
+
+.btn-outline-primary {
+    --bs-btn-color: var(--biru-teks);
+    --bs-btn-border-color: var(--pastel-biru);
+    --bs-btn-hover-color: var(--biru-tua);
+    --bs-btn-hover-bg: var(--pastel-biru);
+    --bs-btn-hover-border-color: var(--pastel-biru);
+    --bs-btn-active-color: var(--biru-tua);
+    --bs-btn-active-bg: var(--pastel-biru-hover);
+    --bs-btn-active-border-color: var(--pastel-biru-hover);
+    --bs-btn-disabled-color: var(--biru-teks);
+    --bs-btn-disabled-border-color: var(--pastel-biru);
+    --bs-btn-focus-shadow-rgb: 169, 201, 238;
+}
+
+.nav-pills {
+    --bs-nav-pills-link-active-color: var(--biru-tua);
+    --bs-nav-pills-link-active-bg: var(--pastel-biru);
+}
+
+.text-bg-primary,
+.bg-primary {
+    color: var(--biru-tua) !important;
+    background-color: var(--pastel-biru) !important;
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--pastel-biru-aktif);
+    box-shadow: 0 0 0 .25rem rgba(169, 201, 238, .45);
+}
+
+.form-check-input:checked {
+    background-color: var(--pastel-biru-aktif);
+    border-color: var(--pastel-biru-aktif);
+}
+
+.spinner-border { color: var(--biru-teks); }
+
+/* ---------- 2. LAIN-LAIN ---------- */
+
+/* Lebar sidebar admin */
+.sidebar { width: 260px; }
+
+/* Konten di samping sidebar boleh mengecil (agar tabel tidak melebarkan halaman) */
+.konten { min-width: 0; }
+
+/* Foto produk (kotak persegi, dipotong rapi) */
+.foto-produk    { width: 96px; height: 96px; object-fit: cover; border-radius: .5rem; }
+.foto-produk-sm { width: 40px; height: 40px; object-fit: cover; border-radius: .375rem; flex-shrink: 0; }
+
+/* Tempat logo yang masih kosong: kotak putus-putus. Hilang otomatis setelah file logo dipasang. */
+.logo-kosong {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    border: 2px dashed var(--bs-border-color);
+    border-radius: .5rem;
+    color: var(--bs-secondary-color);
+    font-size: .65rem;
+    font-weight: 600;
+}
+
+/* Daftar produk / keranjang yang bisa digulir */
+.area-gulir { max-height: 70vh; overflow-y: auto; }
+
+/* Kartu produk yang bisa diklik (kasir) */
+.kartu-klik { cursor: pointer; }
+
+/* Struk kasir ukuran kertas thermal */
+.struk { max-width: 340px; font-family: "Courier New", monospace; font-size: 13px; }
+
+@media print {
+    body { background: #fff !important; }
+    .struk { max-width: 100%; box-shadow: none !important; border: 0 !important; }
+}
