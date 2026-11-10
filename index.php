@@ -456,7 +456,7 @@ $berkas_logo  = 'assets/img/logo.png';
         }
     </style>
 </head>
-<body data-wa="<?= e(nomor_wa($toko['telepon'])) ?>">
+<body data-wa="<?= e(nomor_wa($toko['telepon'])) ?>" data-qris-url="<?= e(url('qris.php')) ?>">
 
 <!-- Navigasi -->
 <nav class="navbar navbar-expand-lg sticky-top">
@@ -909,7 +909,7 @@ $berkas_logo  = 'assets/img/logo.png';
 </div>
 
 <script src="<?= url('assets/vendor/bootstrap/js/bootstrap.bundle.min.js') ?>"></script>
-<script src="<?= url('assets/js/katalog.js') ?>"></script>
+<script src="<?= url('assets/js/katalog.js') ?>?v=20261110-4"></script>
 <script>
 /* Munculkan elemen .muncul saat masuk layar */
 (function () {

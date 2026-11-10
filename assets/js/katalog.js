@@ -1,6 +1,6 @@
 // assets/js/katalog.js
 // Keranjang belanja di website publik. Isi keranjang disimpan di browser (localStorage)
-// dan dikirim sebagai pesan WhatsApp ke pemilik toko (nomor ada di atribut data-wa pada <body>).
+// disimpan sebagai pesanan masuk, lalu dikirim sebagai pesan WhatsApp ke pemilik toko.
 
 const KUNCI_SIMPAN = 'tokonajwa_keranjang';
 let keranjang = [];   // [{id, nama, harga, satuan, foto, qty}]
@@ -96,7 +96,7 @@ document.getElementById('tombolKosongkan').addEventListener('click', function ()
 });
 
 // Kirim pesanan ke WhatsApp
-document.getElementById('tombolPesan').addEventListener('click', function () {
+document.getElementById('tombolPesan').addEventListener('click', async function () {
     const nama = document.getElementById('namaPemesan').value.trim();
     const alamat = document.getElementById('alamatPemesan').value.trim();
     const layanan = document.querySelector('input[name="layanan"]:checked').value;
@@ -105,21 +105,44 @@ document.getElementById('tombolPesan').addEventListener('click', function () {
     if (!nama) return alert('Silakan isi nama Anda.');
     if (layanan === 'Antar ke Rumah' && !alamat) return alert('Silakan isi alamat pengantaran.');
 
-    let total = 0;
-    let pesan = '*PESANAN SEMBAKO - TOKO NAJWA*\n\nHalo, saya mau pesan:\n';
-    keranjang.forEach(function (i, urutan) {
-        const subtotal = i.harga * i.qty;
-        total += subtotal;
-        pesan += (urutan + 1) + '. *' + i.nama + '*\n   ' + i.qty + ' ' + i.satuan + ' x ' + rupiah(i.harga) + ' = ' + rupiah(subtotal) + '\n';
-    });
-    pesan += '\n*TOTAL: ' + rupiah(total) + '*\n------------------------\n';
-    pesan += '*Nama:* ' + nama + '\n';
-    pesan += '*Layanan:* ' + layanan + '\n';
-    if (alamat) pesan += '*Alamat:* ' + alamat + '\n';
-    pesan += '*Pembayaran:* ' + bayar + '\n\nTerima kasih!';
+    const tombol = this;
+    tombol.disabled = true;
+    try {
+        const response = await fetch('api/pesanan.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                nama: nama, layanan: layanan, catatan: alamat, metode_bayar: bayar,
+                items: keranjang.map(function (i) { return { id: i.id, qty: i.qty }; })
+            })
+        });
+        const hasil = await response.json();
+        if (!response.ok || !hasil.ok) throw new Error(hasil.pesan || 'Pesanan gagal disimpan.');
 
-    const nomor = document.body.dataset.wa;
-    window.open('https://wa.me/' + nomor + '?text=' + encodeURIComponent(pesan), '_blank');
+        let pesan = '*PESANAN SEMBAKO - TOKO NAJWA*\n';
+        pesan += '*Kode pesanan: ' + hasil.kode + '*\n\nHalo, saya mau pesan:\n';
+        hasil.items.forEach(function (i, urutan) {
+            pesan += (urutan + 1) + '. *' + i.nama + '*\n   ' + i.qty + ' ' + i.satuan + ' x ' + rupiah(i.harga) + ' = ' + rupiah(i.subtotal) + '\n';
+        });
+        pesan += '\n*TOTAL: ' + rupiah(hasil.total) + '*\n------------------------\n';
+        pesan += '*Nama:* ' + nama + '\n*Layanan:* ' + layanan + '\n';
+        if (alamat) pesan += '*Waktu ambil / catatan:* ' + alamat + '\n';
+        pesan += '*Pembayaran:* ' + bayar + '\n';
+        if (bayar === 'QRIS') {
+            const halamanQris = new URL(document.body.dataset.qrisUrl, window.location.origin).href;
+            pesan += '*QRIS toko (buka untuk melihat gambar besar):* ' + halamanQris + '\n';
+        }
+        pesan += '\nTerima kasih!';
+
+        const nomor = document.body.dataset.wa;
+        window.location.href = 'https://wa.me/' + nomor + '?text=' + encodeURIComponent(pesan);
+        keranjang = [];
+        simpan();
+    } catch (error) {
+        alert(error.message || 'Pesanan gagal disimpan.');
+    } finally {
+        tombol.disabled = keranjang.length === 0;
+    }
 });
 
 tampilkan();

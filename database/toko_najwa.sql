@@ -8,16 +8,16 @@
 --              jadi semua data lama akan hilang.
 --
 -- Daftar tabel:
---   users, kategori, produk, transaksi, transaksi_detail,
---   piutang, piutang_pembayaran, restock, pengeluaran, pengaturan
+--   users, kategori, produk, pelanggan, transaksi, transaksi_detail,
+--   piutang, piutang_pembayaran, pesanan_online, restock, pengeluaran, pengaturan
 -- =====================================================================
 
 CREATE DATABASE IF NOT EXISTS db_tokonajwa DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 USE db_tokonajwa;
 
 SET FOREIGN_KEY_CHECKS = 0;
-DROP TABLE IF EXISTS piutang_pembayaran, piutang, transaksi_detail, transaksi,
-                     restock, pengeluaran, produk, kategori, pengaturan, users;
+DROP TABLE IF EXISTS piutang_pembayaran, piutang, transaksi_detail, transaksi, pesanan_online,
+                     restock, pengeluaran, produk, pelanggan, kategori, pengaturan, users;
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- ---------------------------------------------------------------------
@@ -57,12 +57,24 @@ CREATE TABLE produk (
     FOREIGN KEY (kategori_id) REFERENCES kategori(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Data pelanggan terdaftar untuk transaksi dan kasbon
+CREATE TABLE pelanggan (
+    id             INT AUTO_INCREMENT PRIMARY KEY,
+    nama_pelanggan VARCHAR(100) NOT NULL UNIQUE,
+    no_telepon     VARCHAR(30) NULL,
+    alamat         TEXT NULL,
+    batas_utang    DECIMAL(12,0) NOT NULL DEFAULT 0,
+    catatan        TEXT NULL,
+    created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Satu baris = satu nota/struk penjualan
 CREATE TABLE transaksi (
     id                INT AUTO_INCREMENT PRIMARY KEY,
     no_faktur         VARCHAR(50) NOT NULL UNIQUE,      -- contoh: TRX-20261103-0001
     tanggal           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     user_id           INT NULL,                         -- kasir yang melayani
+    pelanggan_id      INT NULL,
     nama_pelanggan    VARCHAR(100) NOT NULL DEFAULT 'Warga / Umum',
     total_harga       DECIMAL(12,0) NOT NULL DEFAULT 0,
     total_bayar       DECIMAL(12,0) NOT NULL DEFAULT 0,
@@ -70,7 +82,8 @@ CREATE TABLE transaksi (
     metode_pembayaran ENUM('tunai', 'qris', 'utang') NOT NULL DEFAULT 'tunai',
     status_pembayaran ENUM('lunas', 'belum_lunas') NOT NULL DEFAULT 'lunas',
     catatan           TEXT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (pelanggan_id) REFERENCES pelanggan(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Rincian barang pada setiap nota (harga beli/jual disalin agar laporan tidak berubah
@@ -92,6 +105,7 @@ CREATE TABLE transaksi_detail (
 CREATE TABLE piutang (
     id              INT AUTO_INCREMENT PRIMARY KEY,
     transaksi_id    INT NULL,                           -- terisi jika kasbon berasal dari kasir
+    pelanggan_id    INT NULL,
     nama_pelanggan  VARCHAR(100) NOT NULL,
     no_telepon      VARCHAR(30) NULL,
     total_utang     DECIMAL(12,0) NOT NULL DEFAULT 0,
@@ -100,7 +114,8 @@ CREATE TABLE piutang (
     tgl_jatuh_tempo DATE NULL,
     status          ENUM('belum_lunas', 'lunas') NOT NULL DEFAULT 'belum_lunas',
     catatan         TEXT NULL,
-    FOREIGN KEY (transaksi_id) REFERENCES transaksi(id) ON DELETE SET NULL
+    FOREIGN KEY (transaksi_id) REFERENCES transaksi(id) ON DELETE SET NULL,
+    FOREIGN KEY (pelanggan_id) REFERENCES pelanggan(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Riwayat cicilan / pelunasan kasbon
@@ -112,6 +127,20 @@ CREATE TABLE piutang_pembayaran (
     metode       VARCHAR(50) NOT NULL DEFAULT 'tunai',
     catatan      VARCHAR(255) NULL,
     FOREIGN KEY (piutang_id) REFERENCES piutang(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Pesanan dari katalog yang dikirim ke WhatsApp (belum menjadi transaksi kasir)
+CREATE TABLE pesanan_online (
+    id             INT AUTO_INCREMENT PRIMARY KEY,
+    kode_pesanan   VARCHAR(32) NOT NULL UNIQUE,
+    nama_pemesan   VARCHAR(100) NOT NULL,
+    layanan        VARCHAR(50) NOT NULL DEFAULT 'Ambil di Toko',
+    catatan        TEXT NULL,
+    metode_bayar   VARCHAR(100) NOT NULL,
+    total          DECIMAL(12,0) NOT NULL DEFAULT 0,
+    item_json      JSON NOT NULL,
+    status         ENUM('baru', 'diproses', 'selesai', 'dibatalkan') NOT NULL DEFAULT 'baru',
+    created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Riwayat kulakan (barang masuk dari grosir)
