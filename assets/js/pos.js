@@ -184,5 +184,26 @@ el.form.addEventListener('submit', function (event) {
     }
 });
 
+/* ---------- Pelanggan ---------- */
+const pilihPelanggan = document.getElementById('pilihPelanggan');
+const panelPelangganBaru = document.getElementById('panelPelangganBaru');
+const inputNamaBaru = panelPelangganBaru.querySelector('[name="nama_pelanggan_baru"]');
+
+pilihPelanggan.addEventListener('change', function () {
+    const baru = pilihPelanggan.value === 'baru';
+    panelPelangganBaru.classList.toggle('d-none', !baru);
+    inputNamaBaru.required = baru;
+    if (baru) inputNamaBaru.focus();
+});
+
+// Kasbon wajib atas nama pelanggan (kasir juga memeriksa ulang di server)
+el.form.addEventListener('submit', function (event) {
+    if (metodeBayar() === 'utang' && pilihPelanggan.value === '') {
+        event.preventDefault();
+        alert('Untuk kasbon, pilih pelanggan atau daftarkan pelanggan baru.');
+        pilihPelanggan.focus();
+    }
+});
+
 tampilkanProduk();
 tampilkanKeranjang();

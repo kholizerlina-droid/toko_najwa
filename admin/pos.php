@@ -9,10 +9,11 @@ $pesan_error  = '';
 
 if (is_post() && post('aksi') === 'bayar') {
     $keranjang   = json_decode(post('keranjang', '[]'), true) ?: [];
-    $pelanggan   = post('nama_pelanggan') ?: 'Warga / Umum';
+    $pilih_pelanggan = post('pelanggan_id');          // '' = umum | angka = pelanggan terdaftar | 'baru' = daftarkan sekarang
+    $nama_baru       = post('nama_pelanggan_baru');
+    $telepon_baru    = post('telepon_pelanggan_baru');
     $metode      = post('metode_pembayaran', 'tunai');
     $uang_bayar  = (float) post('uang_bayar');
-    $telepon     = post('telepon_pelanggan');
     $jatuh_tempo = post('jatuh_tempo') ?: date('Y-m-d', strtotime('+14 days'));
     $catatan     = post('catatan');
 
@@ -21,6 +22,27 @@ if (is_post() && post('aksi') === 'bayar') {
     try {
         if (!in_array($metode, ['tunai', 'qris', 'utang'], true)) {
             throw new Exception('Metode pembayaran tidak dikenal.');
+        }
+
+        // 0. Tentukan pelanggan (umum / terdaftar / baru). Pelanggan baru ikut dibatalkan jika transaksi gagal.
+        $pelanggan    = 'Warga / Umum';
+        $pelanggan_id = null;
+        $telepon      = '';
+        if ($pilih_pelanggan === 'baru') {
+            if ($nama_baru === '') throw new Exception('Nama pelanggan baru wajib diisi.');
+            if (ambil_nilai('SELECT COUNT(*) FROM pelanggan WHERE nama_pelanggan = ?', 's', [$nama_baru]) > 0) {
+                throw new Exception("Pelanggan \"$nama_baru\" sudah terdaftar, silakan pilih dari daftar.");
+            }
+            jalankan('INSERT INTO pelanggan (nama_pelanggan, no_telepon) VALUES (?, ?)', 'ss', [$nama_baru, $telepon_baru !== '' ? $telepon_baru : null]);
+            $pelanggan_id = $db->insert_id;
+            $pelanggan    = $nama_baru;
+            $telepon      = $telepon_baru;
+        } elseif ($pilih_pelanggan !== '') {
+            $data = ambil_satu('SELECT id, nama_pelanggan, no_telepon FROM pelanggan WHERE id = ?', 'i', [(int) $pilih_pelanggan]);
+            if (!$data) throw new Exception('Pelanggan tidak ditemukan.');
+            $pelanggan_id = (int) $data['id'];
+            $pelanggan    = $data['nama_pelanggan'];
+            $telepon      = (string) $data['no_telepon'];
         }
 
         // 1. Cek tiap barang ke database (jangan percaya harga dari browser)
@@ -56,7 +78,16 @@ if (is_post() && post('aksi') === 'bayar') {
         } else { // utang / kasbon
             $status     = 'belum_lunas';
             $uang_bayar = 0;
-            if ($pelanggan === 'Warga / Umum') throw new Exception('Untuk kasbon, isi nama warga dengan jelas.');
+            if ($pelanggan_id === null) throw new Exception('Untuk kasbon, pilih pelanggan atau daftarkan pelanggan baru.');
+
+            $batas = (float) ambil_nilai('SELECT batas_utang FROM pelanggan WHERE id = ?', 'i', [$pelanggan_id]);
+            $sisa_sekarang = (float) ambil_nilai(
+                "SELECT COALESCE(SUM(sisa_utang), 0) FROM piutang WHERE pelanggan_id = ? AND status = 'belum_lunas'",
+                'i', [$pelanggan_id]
+            );
+            if ($batas > 0 && $sisa_sekarang + $total > $batas) {
+                throw new Exception('Melebihi batas kasbon ' . rupiah($batas) . ' (kasbon saat ini ' . rupiah($sisa_sekarang) . ').');
+            }
         }
 
         // 3. Buat nomor faktur: TRX-TanggalHariIni-0001, 0002, dst.
@@ -67,10 +98,10 @@ if (is_post() && post('aksi') === 'bayar') {
 
         // 4. Simpan nota, rincian, dan kurangi stok
         jalankan(
-            'INSERT INTO transaksi (no_faktur, user_id, nama_pelanggan, total_harga, total_bayar, kembalian, metode_pembayaran, status_pembayaran, catatan)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            'sisdddsss',
-            [$no_faktur, user_login()['id'], $pelanggan, $total, $uang_bayar, $kembalian, $metode, $status, $catatan]
+            'INSERT INTO transaksi (no_faktur, user_id, pelanggan_id, nama_pelanggan, total_harga, total_bayar, kembalian, metode_pembayaran, status_pembayaran, catatan)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'siisdddsss',
+            [$no_faktur, user_login()['id'], $pelanggan_id, $pelanggan, $total, $uang_bayar, $kembalian, $metode, $status, $catatan]
         );
         $transaksi_id = $db->insert_id;
 
@@ -88,10 +119,10 @@ if (is_post() && post('aksi') === 'bayar') {
         // 5. Jika kasbon, catat juga di buku kasbon
         if ($metode === 'utang') {
             jalankan(
-                "INSERT INTO piutang (transaksi_id, nama_pelanggan, no_telepon, total_utang, sisa_utang, tgl_utang, tgl_jatuh_tempo, status, catatan)
-                 VALUES (?, ?, ?, ?, ?, CURDATE(), ?, 'belum_lunas', ?)",
-                'issddss',
-                [$transaksi_id, $pelanggan, $telepon, $total, $total, $jatuh_tempo, $catatan ?: "Nota $no_faktur"]
+                "INSERT INTO piutang (transaksi_id, pelanggan_id, nama_pelanggan, no_telepon, total_utang, sisa_utang, tgl_utang, tgl_jatuh_tempo, status, catatan)
+                 VALUES (?, ?, ?, ?, ?, ?, CURDATE(), ?, 'belum_lunas', ?)",
+                'iissddss',
+                [$transaksi_id, $pelanggan_id, $pelanggan, $telepon, $total, $total, $jatuh_tempo, $catatan ?: "Nota $no_faktur"]
             );
         }
 
@@ -116,6 +147,11 @@ foreach ($daftar_produk as &$p) {
 }
 unset($p);
 $daftar_kategori = ambil_semua('SELECT id, nama_kategori FROM kategori ORDER BY id');
+$daftar_pelanggan = ambil_semua(
+    "SELECT pl.id, pl.nama_pelanggan,
+            COALESCE((SELECT SUM(sisa_utang) FROM piutang WHERE pelanggan_id = pl.id AND status = 'belum_lunas'), 0) AS sisa_utang
+     FROM pelanggan pl ORDER BY pl.nama_pelanggan"
+);
 
 /* ---------- Tampilan ---------- */
 $judul_halaman  = 'Kasir (POS)';
@@ -187,8 +223,18 @@ include __DIR__ . '/../includes/layout/admin_top.php';
                     <span class="h4 mb-0 text-primary" id="teksTotal">Rp 0</span>
                 </div>
 
-                <input type="text" name="nama_pelanggan" id="inputPelanggan" class="form-control mb-3"
-                       value="Warga / Umum" placeholder="Nama pelanggan" required>
+                <select name="pelanggan_id" id="pilihPelanggan" class="form-select mb-2" aria-label="Pelanggan">
+                    <option value="">Warga / Umum (tanpa nama)</option>
+                    <option value="baru">+ Pelanggan baru...</option>
+                    <?php foreach ($daftar_pelanggan as $pl): ?>
+                        <option value="<?= $pl['id'] ?>"><?= e($pl['nama_pelanggan']) ?><?= $pl['sisa_utang'] > 0 ? ' - kasbon ' . rupiah($pl['sisa_utang']) : '' ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <div id="panelPelangganBaru" class="d-none mb-2">
+                    <input type="text" name="nama_pelanggan_baru" class="form-control mb-2" maxlength="100" placeholder="Nama pelanggan baru">
+                    <input type="text" name="telepon_pelanggan_baru" class="form-control" maxlength="30" placeholder="Nomor WhatsApp (opsional)">
+                </div>
+                <div class="mb-3"></div>
 
                 <div class="btn-group w-100 mb-3" role="group" aria-label="Metode pembayaran">
                     <input type="radio" class="btn-check" name="metode_pembayaran" id="bayarTunai" value="tunai" checked>
@@ -225,7 +271,7 @@ include __DIR__ . '/../includes/layout/admin_top.php';
 
                 <!-- Panel kasbon -->
                 <div id="panelUtang" class="d-none">
-                    <input type="text" name="telepon_pelanggan" class="form-control mb-2" placeholder="Nomor WhatsApp (opsional)">
+                    <div class="form-text mb-2 mt-0">Kasbon wajib atas nama pelanggan (pilih dari daftar atau daftarkan baru di atas).</div>
                     <label class="form-label small mb-1" for="jatuhTempo">Jatuh tempo</label>
                     <input type="date" name="jatuh_tempo" id="jatuhTempo" class="form-control" value="<?= date('Y-m-d', strtotime('+14 days')) ?>">
                 </div>

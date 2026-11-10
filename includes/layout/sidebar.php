@@ -8,6 +8,7 @@ $daftar_menu = [
     'Utama' => [
         ['dashboard',   'index.php',       'bi-speedometer2',    'Dashboard',        false],
         ['pos',         'pos.php',         'bi-cart3',           'Kasir (POS)',      false],
+        ['pelanggan',   'pelanggan.php',   'bi-people',          'Data Pelanggan',   false],
     ],
     'Inventaris' => [
         ['produk',      'produk.php',      'bi-box-seam',        'Data Produk',      false],

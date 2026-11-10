@@ -7,20 +7,28 @@ if (is_post()) {
     $aksi = post('aksi');
 
     if ($aksi === 'tambah') {
-        $nama    = post('nama_pelanggan');
+        $pel     = ambil_satu('SELECT id, nama_pelanggan, no_telepon, batas_utang FROM pelanggan WHERE id = ?', 'i', [(int) post('pelanggan_id')]);
         $nominal = (float) post('total_utang');
 
-        if ($nama === '' || $nominal <= 0) {
-            set_flash('danger', 'Nama warga dan nominal kasbon wajib diisi.');
+        if (!$pel || $nominal <= 0) {
+            set_flash('danger', 'Pelanggan dan nominal kasbon wajib diisi.');
         } else {
-            jalankan(
-                "INSERT INTO piutang (nama_pelanggan, no_telepon, total_utang, sisa_utang, tgl_utang, tgl_jatuh_tempo, catatan)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
-                'ssddsss',
-                [$nama, post('no_telepon'), $nominal, $nominal, post('tgl_utang', date('Y-m-d')),
-                 tanggal_atau_null(post('tgl_jatuh_tempo')), post('catatan')]
+            $sisa_sekarang = (float) ambil_nilai(
+                "SELECT COALESCE(SUM(sisa_utang), 0) FROM piutang WHERE pelanggan_id = ? AND status = 'belum_lunas'",
+                'i', [$pel['id']]
             );
-            set_flash('success', 'Kasbon baru berhasil dicatat.');
+            if ($pel['batas_utang'] > 0 && $sisa_sekarang + $nominal > $pel['batas_utang']) {
+                set_flash('danger', 'Melebihi batas kasbon ' . rupiah($pel['batas_utang']) . ' (kasbon saat ini ' . rupiah($sisa_sekarang) . ').');
+            } else {
+                jalankan(
+                    "INSERT INTO piutang (pelanggan_id, nama_pelanggan, no_telepon, total_utang, sisa_utang, tgl_utang, tgl_jatuh_tempo, catatan)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    'issddsss',
+                    [$pel['id'], $pel['nama_pelanggan'], $pel['no_telepon'], $nominal, $nominal, post('tgl_utang', date('Y-m-d')),
+                     tanggal_atau_null(post('tgl_jatuh_tempo')), post('catatan')]
+                );
+                set_flash('success', 'Kasbon baru berhasil dicatat.');
+            }
         }
     } elseif ($aksi === 'bayar') {
         $id     = (int) post('piutang_id');
@@ -62,21 +70,26 @@ if (is_post()) {
 $status = get('status', 'belum_lunas');   // belum_lunas | lunas | semua
 $cari   = get('q');
 
-$sql   = 'SELECT * FROM piutang WHERE 1=1';
+// Nama & telepon dibaca dari tabel pelanggan (ikut berubah jika data pelanggan diedit);
+// kolom lama di piutang dipakai hanya jika kasbon belum tertaut ke pelanggan.
+$sql   = 'SELECT p.*, COALESCE(pl.nama_pelanggan, p.nama_pelanggan) AS nama_pelanggan,
+                 COALESCE(pl.no_telepon, p.no_telepon) AS no_telepon
+          FROM piutang p LEFT JOIN pelanggan pl ON pl.id = p.pelanggan_id WHERE 1=1';
 $tipe  = '';
 $param = [];
 if ($status !== 'semua') {
-    $sql .= ' AND status = ?';
+    $sql .= ' AND p.status = ?';
     $tipe .= 's';
     $param[] = $status;
 }
 if ($cari !== '') {
-    $sql .= ' AND (nama_pelanggan LIKE ? OR catatan LIKE ?)';
+    $sql .= ' AND (COALESCE(pl.nama_pelanggan, p.nama_pelanggan) LIKE ? OR p.catatan LIKE ?)';
     $tipe .= 'ss';
     $param[] = "%$cari%";
     $param[] = "%$cari%";
 }
-$daftar_piutang = ambil_semua($sql . ' ORDER BY status ASC, tgl_utang DESC', $tipe, $param);
+$daftar_piutang = ambil_semua($sql . ' ORDER BY p.status ASC, p.tgl_utang DESC', $tipe, $param);
+$daftar_pelanggan = ambil_semua('SELECT id, nama_pelanggan FROM pelanggan ORDER BY nama_pelanggan');
 
 $total_sisa      = ambil_nilai("SELECT COALESCE(SUM(sisa_utang), 0) FROM piutang WHERE status = 'belum_lunas'");
 $total_terbayar  = ambil_nilai('SELECT COALESCE(SUM(jumlah_bayar), 0) FROM piutang_pembayaran');
@@ -177,10 +190,14 @@ include __DIR__ . '/../includes/layout/admin_top.php';
             <div class="modal-header"><h2 class="modal-title h5">Catat Kasbon Baru</h2>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button></div>
             <div class="modal-body">
-                <div class="mb-3"><label class="form-label">Nama warga</label>
-                    <input type="text" name="nama_pelanggan" class="form-control" required></div>
-                <div class="mb-3"><label class="form-label">Nomor WhatsApp (opsional)</label>
-                    <input type="text" name="no_telepon" class="form-control" placeholder="08xxxxxxxxxx"></div>
+                <div class="mb-3"><label class="form-label" for="kasbonPelanggan">Pelanggan</label>
+                    <select name="pelanggan_id" id="kasbonPelanggan" class="form-select" required>
+                        <option value="">- Pilih pelanggan -</option>
+                        <?php foreach ($daftar_pelanggan as $pl): ?>
+                            <option value="<?= $pl['id'] ?>"><?= e($pl['nama_pelanggan']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="form-text">Belum terdaftar? <a href="pelanggan.php">Tambah di Data Pelanggan</a> dulu.</div></div>
                 <div class="mb-3"><label class="form-label">Nominal kasbon</label>
                     <div class="input-group"><span class="input-group-text">Rp</span>
                         <input type="number" name="total_utang" class="form-control" min="1000" required></div></div>
