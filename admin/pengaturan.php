@@ -11,6 +11,7 @@ if (!ambil_nilai('SELECT COUNT(*) FROM pengaturan')) {
         'sssss', [$bawaan['nama_toko'], $bawaan['pemilik'], $bawaan['telepon'], $bawaan['alamat'], $bawaan['teks_footer_struk']]
     );
 }
+$id_pengaturan = (int) ambil_nilai('SELECT id FROM pengaturan ORDER BY id LIMIT 1');
 
 /* ---------- Proses form ---------- */
 if (is_post()) {
@@ -22,8 +23,8 @@ if (is_post()) {
             set_flash('danger', 'Nama toko dan pemilik wajib diisi.');
         } else {
             jalankan(
-                'UPDATE pengaturan SET nama_toko = ?, pemilik = ?, telepon = ?, alamat = ?, teks_footer_struk = ?',   // tabel pengaturan hanya berisi 1 baris
-                'sssss', [post('nama_toko'), post('pemilik'), post('telepon'), post('alamat'), post('teks_footer_struk')]
+                'UPDATE pengaturan SET nama_toko = ?, pemilik = ?, telepon = ?, alamat = ?, teks_footer_struk = ? WHERE id = ?',
+                'sssssi', [post('nama_toko'), post('pemilik'), post('telepon'), post('alamat'), post('teks_footer_struk'), $id_pengaturan]
             );
             set_flash('success', 'Profil toko diperbarui.');
         }
@@ -31,11 +32,11 @@ if (is_post()) {
         $qris_lama = pengaturan_toko()['qris_image'];
         try {
             if (post('hapus_qris') === '1') {
-                jalankan('UPDATE pengaturan SET qris_image = NULL');
+                jalankan('UPDATE pengaturan SET qris_image = NULL WHERE id = ?', 'i', [$id_pengaturan]);
                 hapus_gambar($qris_lama, FOLDER_QRIS);
                 set_flash('success', 'QRIS dihapus, kembali memakai gambar contoh.');
             } elseif ($qris_baru = simpan_gambar($_FILES['qris'] ?? [], FOLDER_QRIS, 'qris-')) {
-                jalankan('UPDATE pengaturan SET qris_image = ?', 's', [$qris_baru]);
+                jalankan('UPDATE pengaturan SET qris_image = ? WHERE id = ?', 'si', [$qris_baru, $id_pengaturan]);
                 hapus_gambar($qris_lama, FOLDER_QRIS);
                 set_flash('success', 'QRIS berhasil diunggah.');
             } else {

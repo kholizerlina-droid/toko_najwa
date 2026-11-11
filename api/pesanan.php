@@ -30,6 +30,16 @@ if ($nama === '' || mb_strlen($nama) > 100 || $layanan !== 'Ambil di Toko'
 
 try {
     $db = db();
+    $alamat_ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+    $ip_hash = hash_hmac('sha256', $alamat_ip, DB_PASS !== '' ? DB_PASS : DB_NAME . '|toko-najwa-order-limit');
+    $pesanan_terbaru = (int) ambil_nilai(
+        'SELECT COUNT(*) FROM pesanan_online WHERE ip_hash = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)',
+        's', [$ip_hash]
+    );
+    if ($pesanan_terbaru >= 10) {
+        balas_json(429, ['ok' => false, 'pesan' => 'Terlalu banyak pesanan dari jaringan ini. Coba lagi beberapa menit lagi.']);
+    }
+
     $baris = [];
     $total = 0;
     foreach ($items as $item) {
@@ -53,8 +63,8 @@ try {
 
     $kode = 'ORD-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
     jalankan(
-        'INSERT INTO pesanan_online (kode_pesanan, nama_pemesan, layanan, catatan, metode_bayar, total, item_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        'sssssis', [$kode, $nama, $layanan, $catatan !== '' ? $catatan : null, $metode, $total, json_encode($baris, JSON_UNESCAPED_UNICODE)]
+        'INSERT INTO pesanan_online (kode_pesanan, nama_pemesan, layanan, catatan, metode_bayar, total, item_json, ip_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'sssssiss', [$kode, $nama, $layanan, $catatan !== '' ? $catatan : null, $metode, $total, json_encode($baris, JSON_UNESCAPED_UNICODE), $ip_hash]
     );
     balas_json(201, ['ok' => true, 'kode' => $kode, 'total' => $total, 'items' => $baris]);
 } catch (Throwable $e) {

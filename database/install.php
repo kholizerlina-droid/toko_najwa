@@ -3,6 +3,14 @@
 // Cara mudah mengimpor database tanpa phpMyAdmin: buka halaman ini lewat browser lalu klik tombol.
 // PERINGATAN: semua tabel dibuat ulang, data lama hilang. Hapus file ini saat sudah dipakai sungguhan.
 
+// Installer hanya boleh dipakai dari komputer yang menjalankan Laragon.
+// Jangan biarkan URL publik memicu DROP TABLE dari halaman ini.
+$alamat_lokal = in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true);
+if (!$alamat_lokal) {
+    http_response_code(404);
+    exit('Not Found');
+}
+
 require_once __DIR__ . '/../config/config.php';
 
 $pesan = '';

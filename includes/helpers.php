@@ -209,9 +209,19 @@ function status_kadaluarsa(?string $tanggal): array
 
 const FOLDER_FOTO_PRODUK = 'assets/img/produk/';
 
-// Alamat foto sebuah produk (kolom produk.gambar). Jika belum ada foto, dipakai gambar kosong.
+// Alamat foto produk lokal atau HTTPS. Jika foto tidak tersedia, dipakai gambar kosong.
 function gambar_produk(?string $nama_file): string
 {
+    if ($nama_file && filter_var($nama_file, FILTER_VALIDATE_URL) !== false) {
+        $bagian_url = parse_url($nama_file);
+        if (is_array($bagian_url)
+            && strtolower($bagian_url['scheme'] ?? '') === 'https'
+            && !empty($bagian_url['host'])
+            && !isset($bagian_url['user'])
+            && !isset($bagian_url['pass'])) {
+            return $nama_file;
+        }
+    }
     if ($nama_file && is_file(ROOT_PATH . '/' . FOLDER_FOTO_PRODUK . $nama_file)) {
         return url(FOLDER_FOTO_PRODUK . $nama_file);
     }
@@ -240,7 +250,9 @@ function simpan_gambar(array $file, string $folder_relatif = FOLDER_FOTO_PRODUK,
         mkdir($folder, 0777, true);
     }
     $nama_file = $awalan . bin2hex(random_bytes(6)) . '.' . $jenis_diizinkan[$jenis];
-    move_uploaded_file($file['tmp_name'], $folder . $nama_file);
+    if (!move_uploaded_file($file['tmp_name'], $folder . $nama_file)) {
+        throw new Exception('Foto gagal disimpan ke folder unggahan.');
+    }
 
     return $nama_file;
 }

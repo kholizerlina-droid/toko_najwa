@@ -19,6 +19,26 @@ if (is_post()) {
         $stok        = (int) post('stok');
         $min_stok    = (int) post('min_stok', '5');
         $kadaluarsa  = tanggal_atau_null(post('tgl_kadaluarsa'));
+        $gambar_url  = trim(post('gambar_url'));
+        $ada_file_gambar = ($_FILES['gambar']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE;
+
+        if ($gambar_url !== '' && $ada_file_gambar) {
+            set_flash('danger', 'Pilih salah satu: unggah file foto atau masukkan URL foto.');
+            redirect('produk.php');
+        }
+        if ($gambar_url !== '') {
+            $bagian_url = parse_url($gambar_url);
+            if (strlen($gambar_url) > 255
+                || filter_var($gambar_url, FILTER_VALIDATE_URL) === false
+                || !is_array($bagian_url)
+                || strtolower($bagian_url['scheme'] ?? '') !== 'https'
+                || empty($bagian_url['host'])
+                || isset($bagian_url['user'])
+                || isset($bagian_url['pass'])) {
+                set_flash('danger', 'URL foto harus berupa alamat HTTPS yang valid dan maksimal 255 karakter.');
+                redirect('produk.php');
+            }
+        }
 
         $barcode_dipakai = ambil_nilai(
             'SELECT COUNT(*) FROM produk WHERE kode_barcode = ? AND id <> ?', 'si', [$barcode, $id]
@@ -30,7 +50,7 @@ if (is_post()) {
             set_flash('danger', 'Kode barcode tersebut sudah dipakai produk lain.');
         } else {
             try {
-                $foto_baru = simpan_gambar($_FILES['gambar'] ?? []);   // null jika tidak ada file
+                $foto_baru = simpan_gambar($_FILES['gambar'] ?? []) ?? ($gambar_url !== '' ? $gambar_url : null);
             } catch (Exception $e) {
                 set_flash('danger', $e->getMessage());
                 redirect('produk.php');
@@ -173,7 +193,7 @@ include __DIR__ . '/../includes/layout/admin_top.php';
                     <tr>
                         <td>
                             <div class="d-flex align-items-center">
-                                <img src="<?= gambar_produk($p['gambar']) ?>" alt="" class="foto-produk-sm me-2">
+                                <img src="<?= e(gambar_produk($p['gambar'])) ?>" alt="" class="foto-produk-sm me-2">
                                 <div>
                                     <div class="fw-semibold"><?= e($p['nama_produk']) ?></div>
                                     <small class="text-body-secondary font-monospace"><?= e($p['kode_barcode']) ?></small>
@@ -202,7 +222,8 @@ include __DIR__ . '/../includes/layout/admin_top.php';
                                     data-harga_jual="<?= (int) $p['harga_jual'] ?>"
                                     data-stok="<?= $p['stok'] ?>"
                                     data-min_stok="<?= $p['min_stok'] ?>"
-                                    data-tgl_kadaluarsa="<?= e($p['tgl_kadaluarsa']) ?>">
+                                    data-tgl_kadaluarsa="<?= e($p['tgl_kadaluarsa']) ?>"
+                                    data-gambar_url="<?= str_starts_with(strtolower((string) $p['gambar']), 'https://') ? e($p['gambar']) : '' ?>">
                                 <i class="bi bi-pencil"></i>
                             </button>
                             <form method="post" class="d-inline" data-konfirmasi="Hapus produk &quot;<?= e($p['nama_produk']) ?>&quot;?">
@@ -284,9 +305,14 @@ include __DIR__ . '/../includes/layout/admin_top.php';
                         <input type="date" class="form-control" id="pExp" name="tgl_kadaluarsa">
                     </div>
                     <div class="col-12">
-                        <label class="form-label" for="pFoto">Foto Produk</label>
+                        <label class="form-label" for="pFoto">Unggah Foto Produk</label>
                         <input type="file" class="form-control" id="pFoto" name="gambar" accept="image/jpeg,image/png,image/webp">
-                        <div class="form-text">JPG, PNG, atau WEBP, maksimal 2 MB. Saat mengubah produk, kosongkan jika tidak ingin mengganti foto.</div>
+                        <div class="form-text">JPG, PNG, atau WEBP, maksimal 2 MB.</div>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label" for="pFotoUrl">Atau URL Foto dari Internet</label>
+                        <input type="url" class="form-control" id="pFotoUrl" name="gambar_url" placeholder="https://contoh.com/foto-produk.jpg" maxlength="255" inputmode="url">
+                        <div class="form-text">Masukkan tautan langsung foto berawalan HTTPS. Gunakan salah satu cara foto saja. Saat mengubah produk, kosongkan keduanya jika foto tidak ingin diganti.</div>
                     </div>
                 </div>
             </div>

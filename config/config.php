@@ -2,11 +2,25 @@
 // config/config.php
 // Satu-satunya tempat untuk mengubah pengaturan server (database, zona waktu).
 
-const DB_HOST = '127.0.0.1';
-const DB_USER = 'root';
-const DB_PASS = '';
-const DB_NAME = 'db_tokonajwa';
-
+// Default lokal Laragon. Kredensial hosting disimpan terpisah di database.private.php.
+$db_config = [
+    'host' => '127.0.0.1',
+    'user' => 'root',
+    'pass' => '',
+    'name' => 'db_tokonajwa',
+];
+$private_db_config = __DIR__ . '/database.private.php';
+if (is_file($private_db_config)) {
+    $override = require $private_db_config;
+    if (is_array($override)) {
+        $db_config = array_replace($db_config, $override);
+    }
+}
+define('DB_HOST', (string) $db_config['host']);
+define('DB_USER', (string) $db_config['user']);
+define('DB_PASS', (string) $db_config['pass']);
+define('DB_NAME', (string) $db_config['name']);
+unset($db_config, $private_db_config, $override);
 const ZONA_WAKTU = 'Asia/Jakarta';
 
 // Folder utama project di komputer (contoh: D:\laragon\www\toko_najwa)

@@ -3,3 +3,4 @@
 .idea/
 *.log
 *.tmp
+/config/database.private.php

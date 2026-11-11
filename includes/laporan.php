@@ -3,22 +3,42 @@
 // Perhitungan laba rugi satu periode. Dipakai oleh admin/laporan.php dan admin/cetak_laporan.php
 // supaya angka di layar dan di kertas cetak selalu sama.
 
-function hitung_laporan(string $tgl_mulai, string $tgl_selesai): array
+function hitung_laporan(string $tgl_mulai = '', string $tgl_selesai = ''): array
 {
-    $penjualan = ambil_satu(
-        "SELECT COALESCE(SUM(d.subtotal), 0)            AS omset,
+    $sql_penjualan = "SELECT COALESCE(SUM(d.subtotal), 0)            AS omset,
                 COALESCE(SUM(d.harga_beli * d.qty), 0)  AS hpp,
                 COALESCE(SUM(d.keuntungan), 0)          AS laba_kotor,
                 COUNT(DISTINCT t.id)                    AS jumlah_nota
          FROM transaksi t JOIN transaksi_detail d ON d.transaksi_id = t.id
-         WHERE DATE(t.tanggal) BETWEEN ? AND ?",
-        'ss', [$tgl_mulai, $tgl_selesai]
-    );
+         WHERE 1 = 1";
+    $tipe_penjualan = '';
+    $param_penjualan = [];
+    if ($tgl_mulai !== '') {
+        $sql_penjualan .= ' AND DATE(t.tanggal) >= ?';
+        $tipe_penjualan .= 's';
+        $param_penjualan[] = $tgl_mulai;
+    }
+    if ($tgl_selesai !== '') {
+        $sql_penjualan .= ' AND DATE(t.tanggal) <= ?';
+        $tipe_penjualan .= 's';
+        $param_penjualan[] = $tgl_selesai;
+    }
+    $penjualan = ambil_satu($sql_penjualan, $tipe_penjualan, $param_penjualan);
 
-    $biaya = (float) ambil_nilai(
-        'SELECT COALESCE(SUM(jumlah), 0) FROM pengeluaran WHERE tanggal BETWEEN ? AND ?',
-        'ss', [$tgl_mulai, $tgl_selesai]
-    );
+    $sql_biaya = 'SELECT COALESCE(SUM(jumlah), 0) FROM pengeluaran WHERE 1 = 1';
+    $tipe_biaya = '';
+    $param_biaya = [];
+    if ($tgl_mulai !== '') {
+        $sql_biaya .= ' AND tanggal >= ?';
+        $tipe_biaya .= 's';
+        $param_biaya[] = $tgl_mulai;
+    }
+    if ($tgl_selesai !== '') {
+        $sql_biaya .= ' AND tanggal <= ?';
+        $tipe_biaya .= 's';
+        $param_biaya[] = $tgl_selesai;
+    }
+    $biaya = (float) ambil_nilai($sql_biaya, $tipe_biaya, $param_biaya);
 
     $omset       = (float) $penjualan['omset'];
     $laba_bersih = (float) $penjualan['laba_kotor'] - $biaya;

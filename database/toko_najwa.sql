@@ -53,7 +53,7 @@ CREATE TABLE produk (
     stok           INT NOT NULL DEFAULT 0,
     min_stok       INT NOT NULL DEFAULT 5,              -- batas peringatan stok menipis
     tgl_kadaluarsa DATE NULL,
-    gambar         VARCHAR(255) NULL,                   -- nama file foto di assets/img/produk/
+    gambar         VARCHAR(255) NULL,                   -- nama file lokal atau URL foto HTTPS
     FOREIGN KEY (kategori_id) REFERENCES kategori(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -139,8 +139,11 @@ CREATE TABLE pesanan_online (
     metode_bayar   VARCHAR(100) NOT NULL,
     total          DECIMAL(12,0) NOT NULL DEFAULT 0,
     item_json      JSON NOT NULL,
+    transaksi_id   INT NULL UNIQUE,
+    ip_hash        CHAR(64) NULL,
     status         ENUM('baru', 'diproses', 'selesai', 'dibatalkan') NOT NULL DEFAULT 'baru',
-    created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_pesanan_ip_created (ip_hash, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Riwayat kulakan (barang masuk dari grosir)

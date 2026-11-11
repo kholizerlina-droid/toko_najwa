@@ -7,19 +7,29 @@ if (is_post()) {
     $aksi = post('aksi');
 
     if ($aksi === 'tambah') {
-        $pel     = ambil_satu('SELECT id, nama_pelanggan, no_telepon, batas_utang FROM pelanggan WHERE id = ?', 'i', [(int) post('pelanggan_id')]);
         $nominal = (float) post('total_utang');
 
-        if (!$pel || $nominal <= 0) {
+        if ($nominal <= 0) {
             set_flash('danger', 'Pelanggan dan nominal kasbon wajib diisi.');
         } else {
-            $sisa_sekarang = (float) ambil_nilai(
-                "SELECT COALESCE(SUM(sisa_utang), 0) FROM piutang WHERE pelanggan_id = ? AND status = 'belum_lunas'",
-                'i', [$pel['id']]
-            );
-            if ($pel['batas_utang'] > 0 && $sisa_sekarang + $nominal > $pel['batas_utang']) {
-                set_flash('danger', 'Melebihi batas kasbon ' . rupiah($pel['batas_utang']) . ' (kasbon saat ini ' . rupiah($sisa_sekarang) . ').');
-            } else {
+            $db = db();
+            $db->begin_transaction();
+            try {
+                // Kunci baris pelanggan supaya dua kasir tidak lolos cek batas secara bersamaan.
+                $pel = ambil_satu(
+                    'SELECT id, nama_pelanggan, no_telepon, batas_utang FROM pelanggan WHERE id = ? FOR UPDATE',
+                    'i', [(int) post('pelanggan_id')]
+                );
+                if (!$pel) throw new Exception('Pelanggan tidak ditemukan.');
+
+                $sisa_sekarang = (float) ambil_nilai(
+                    "SELECT COALESCE(SUM(sisa_utang), 0) FROM piutang WHERE pelanggan_id = ? AND status = 'belum_lunas'",
+                    'i', [$pel['id']]
+                );
+                if ($pel['batas_utang'] > 0 && $sisa_sekarang + $nominal > $pel['batas_utang']) {
+                    throw new Exception('Melebihi batas kasbon ' . rupiah($pel['batas_utang']) . ' (kasbon saat ini ' . rupiah($sisa_sekarang) . ').');
+                }
+
                 jalankan(
                     "INSERT INTO piutang (pelanggan_id, nama_pelanggan, no_telepon, total_utang, sisa_utang, tgl_utang, tgl_jatuh_tempo, catatan)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -27,22 +37,31 @@ if (is_post()) {
                     [$pel['id'], $pel['nama_pelanggan'], $pel['no_telepon'], $nominal, $nominal, post('tgl_utang', date('Y-m-d')),
                      tanggal_atau_null(post('tgl_jatuh_tempo')), post('catatan')]
                 );
+                $db->commit();
                 set_flash('success', 'Kasbon baru berhasil dicatat.');
+            } catch (Exception $e) {
+                $db->rollback();
+                set_flash('danger', $e->getMessage());
             }
         }
     } elseif ($aksi === 'bayar') {
         $id     = (int) post('piutang_id');
         $jumlah = (float) post('jumlah_bayar');
-        $utang  = ambil_satu('SELECT * FROM piutang WHERE id = ?', 'i', [$id]);
 
-        if (!$utang || $jumlah <= 0) {
+        if ($jumlah <= 0) {
             set_flash('danger', 'Jumlah pembayaran tidak valid.');
-        } elseif ($jumlah > $utang['sisa_utang']) {
-            set_flash('danger', 'Pembayaran melebihi sisa utang (' . rupiah($utang['sisa_utang']) . ').');
         } else {
             $db = db();
             $db->begin_transaction();
             try {
+                $utang = ambil_satu('SELECT * FROM piutang WHERE id = ? FOR UPDATE', 'i', [$id]);
+                if (!$utang || $utang['status'] !== 'belum_lunas') {
+                    throw new Exception('Kasbon ini tidak ditemukan atau sudah tidak aktif.');
+                }
+                if ($jumlah > $utang['sisa_utang']) {
+                    throw new Exception('Pembayaran melebihi sisa utang (' . rupiah($utang['sisa_utang']) . ').');
+                }
+
                 $sisa = $utang['sisa_utang'] - $jumlah;
                 jalankan(
                     'INSERT INTO piutang_pembayaran (piutang_id, jumlah_bayar, metode, catatan) VALUES (?, ?, ?, ?)',
@@ -60,14 +79,25 @@ if (is_post()) {
             }
         }
     } elseif ($aksi === 'hapus') {
-        jalankan('DELETE FROM piutang WHERE id = ?', 'i', [(int) post('id')]);
-        set_flash('success', 'Catatan kasbon dihapus.');
+        $id_hapus = (int) post('id');
+        $utang_hapus = ambil_satu('SELECT transaksi_id FROM piutang WHERE id = ?', 'i', [$id_hapus]);
+        if (!$utang_hapus) {
+            set_flash('danger', 'Catatan kasbon tidak ditemukan.');
+        } elseif ($utang_hapus['transaksi_id'] !== null) {
+            set_flash('danger', 'Kasbon ini terkait transaksi. Batalkan melalui menu Riwayat Transaksi agar stok dan catatan tetap konsisten.');
+        } elseif ((int) ambil_nilai('SELECT COUNT(*) FROM piutang_pembayaran WHERE piutang_id = ?', 'i', [$id_hapus]) > 0) {
+            set_flash('danger', 'Kasbon memiliki riwayat pembayaran dan tidak dapat dihapus.');
+        } else {
+            jalankan('DELETE FROM piutang WHERE id = ?', 'i', [$id_hapus]);
+            set_flash('success', 'Catatan kasbon dihapus.');
+        }
     }
     redirect('piutang.php');
 }
 
 /* ---------- Ambil data ---------- */
-$status = get('status', 'belum_lunas');   // belum_lunas | lunas | semua
+$status = get('status', 'semua');   // Semua riwayat ditampilkan jika tidak ada filter status.
+if (!in_array($status, ['belum_lunas', 'lunas', 'semua'], true)) $status = 'semua';
 $cari   = get('q');
 
 // Nama & telepon dibaca dari tabel pelanggan (ikut berubah jika data pelanggan diedit);
@@ -124,7 +154,7 @@ include __DIR__ . '/../includes/layout/admin_top.php';
             <select name="status" class="form-select">
                 <option value="belum_lunas" <?= $status === 'belum_lunas' ? 'selected' : '' ?>>Belum lunas</option>
                 <option value="lunas" <?= $status === 'lunas' ? 'selected' : '' ?>>Sudah lunas</option>
-                <option value="semua" <?= $status === 'semua' ? 'selected' : '' ?>>Semua</option>
+                <option value="semua" <?= $status === 'semua' ? 'selected' : '' ?>>Semua (bawaan)</option>
             </select>
         </div>
         <div class="col-md-2 d-grid"><button class="btn btn-outline-primary" type="submit">Terapkan</button></div>

@@ -3,8 +3,8 @@
 require_once __DIR__ . '/../includes/init_admin.php';
 require_once __DIR__ . '/../includes/laporan.php';
 
-$tgl_mulai   = tanggal_dari_url('tgl_mulai', date('Y-m-01'));
-$tgl_selesai = tanggal_dari_url('tgl_selesai', date('Y-m-d'));
+$tgl_mulai   = tanggal_dari_url('tgl_mulai', '');
+$tgl_selesai = tanggal_dari_url('tgl_selesai', '');
 $lap         = hitung_laporan($tgl_mulai, $tgl_selesai);
 
 $judul_halaman = 'Laporan Laba Rugi';
@@ -17,7 +17,7 @@ include __DIR__ . '/../includes/layout/admin_top.php';
         <h1 class="h3 mb-0">Laporan Laba Rugi</h1>
         <p class="text-body-secondary mb-0">Memisahkan modal barang dari keuntungan bersih pemilik.</p>
     </div>
-    <a href="cetak_laporan.php?tgl_mulai=<?= e($tgl_mulai) ?>&tgl_selesai=<?= e($tgl_selesai) ?>" target="_blank" class="btn btn-outline-secondary">
+    <a href="cetak_laporan.php?<?= e(http_build_query(array_filter(['tgl_mulai' => $tgl_mulai, 'tgl_selesai' => $tgl_selesai], static fn($tanggal) => $tanggal !== ''))) ?>" target="_blank" class="btn btn-outline-secondary">
         <i class="bi bi-printer me-1"></i> Cetak Laporan
     </a>
 </div>
@@ -30,6 +30,7 @@ include __DIR__ . '/../includes/layout/admin_top.php';
             <input type="date" name="tgl_selesai" class="form-control" value="<?= e($tgl_selesai) ?>"></div>
         <div class="col-md-6 d-flex flex-wrap gap-2">
             <button class="btn btn-primary" type="submit">Terapkan</button>
+            <a class="btn btn-outline-secondary" href="laporan.php">Semua riwayat</a>
             <a class="btn btn-outline-secondary" href="?tgl_mulai=<?= date('Y-m-d') ?>&tgl_selesai=<?= date('Y-m-d') ?>">Hari ini</a>
             <a class="btn btn-outline-secondary" href="?tgl_mulai=<?= date('Y-m-01') ?>&tgl_selesai=<?= date('Y-m-d') ?>">Bulan ini</a>
         </div>
@@ -40,7 +41,7 @@ include __DIR__ . '/../includes/layout/admin_top.php';
     <div class="col-lg-8">
         <div class="card">
             <div class="card-header fw-semibold">
-                Periode <?= tanggal_indo($tgl_mulai) ?> s.d. <?= tanggal_indo($tgl_selesai) ?>
+                Periode <?= $tgl_mulai === '' && $tgl_selesai === '' ? 'Semua Riwayat' : ($tgl_mulai !== '' ? tanggal_indo($tgl_mulai) : 'Awal') . ' s.d. ' . ($tgl_selesai !== '' ? tanggal_indo($tgl_selesai) : 'Sekarang') ?>
             </div>
             <table class="table mb-0 align-middle">
                 <tbody>

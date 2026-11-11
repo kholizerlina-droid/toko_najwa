@@ -37,10 +37,21 @@ $transaksi_terakhir = ambil_semua(
     "SELECT no_faktur, nama_pelanggan, total_harga, tanggal
      FROM transaksi ORDER BY tanggal DESC LIMIT 5"
 );
+$jumlah_pesanan_pending = (int) ambil_nilai(
+    "SELECT COUNT(*) FROM pesanan_online
+     WHERE transaksi_id IS NULL AND status IN ('baru', 'diproses')"
+);
+$pesanan_pending = ambil_semua(
+    "SELECT id, kode_pesanan, nama_pemesan, total, created_at
+     FROM pesanan_online
+     WHERE transaksi_id IS NULL AND status IN ('baru', 'diproses')
+     ORDER BY created_at DESC LIMIT 5"
+);
 
 /* ---------- Tampilan ---------- */
 $judul_halaman = 'Dashboard';
 $menu_aktif    = 'dashboard';
+$skrip_tambahan = ['dashboard.js'];
 include __DIR__ . '/../includes/layout/admin_top.php';
 ?>
 
@@ -51,6 +62,44 @@ include __DIR__ . '/../includes/layout/admin_top.php';
     </div>
     <a href="pos.php" class="btn btn-primary"><i class="bi bi-cart3 me-1"></i> Buka Kasir</a>
 </div>
+
+<!-- Pop-up otomatis untuk pesanan online yang belum diproses kasir -->
+<?php if ($jumlah_pesanan_pending > 0): ?>
+<div class="modal fade" id="modalPesananMenunggu" tabindex="-1" aria-labelledby="judulPesananMenunggu" aria-hidden="true" data-auto-show="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-primary-subtle">
+                <div>
+                    <h2 class="modal-title fs-5" id="judulPesananMenunggu"><i class="bi bi-bell me-2"></i>Pesanan online baru</h2>
+                    <small class="text-body-secondary"><?= $jumlah_pesanan_pending ?> pesanan menunggu diproses</small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+            </div>
+            <div class="modal-body p-0">
+                <ul class="list-group list-group-flush">
+                    <?php foreach ($pesanan_pending as $p): ?>
+                        <li class="list-group-item d-flex justify-content-between align-items-center gap-3 py-3">
+                            <div class="min-w-0">
+                                <div class="fw-semibold text-truncate"><?= e($p['nama_pemesan']) ?></div>
+                                <small class="font-monospace text-body-secondary"><?= e($p['kode_pesanan']) ?></small>
+                                <small class="d-block text-body-secondary"><?= date('d/m/Y H:i', strtotime($p['created_at'])) ?> &middot; <?= rupiah($p['total']) ?></small>
+                            </div>
+                            <a href="pos.php?pesanan=<?= (int) $p['id'] ?>" class="btn btn-sm btn-primary flex-shrink-0"><i class="bi bi-cart-check me-1"></i>Proses</a>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+                <?php if ($jumlah_pesanan_pending > count($pesanan_pending)): ?>
+                    <div class="px-3 py-2 small text-body-secondary">Menampilkan 5 pesanan terbaru. Buka halaman Pesanan Online untuk melihat semuanya.</div>
+                <?php endif; ?>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <a href="pesanan.php" class="btn btn-link text-decoration-none px-0">Lihat semua pesanan</a>
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Nanti</button>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <!-- Ringkasan -->
 <div class="row g-3 mb-4">

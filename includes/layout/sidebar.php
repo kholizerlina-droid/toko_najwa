@@ -36,6 +36,13 @@ $jumlah_peringatan = (int) ambil_nilai(
      WHERE stok <= min_stok
         OR (tgl_kadaluarsa IS NOT NULL AND tgl_kadaluarsa <= DATE_ADD(CURDATE(), INTERVAL 30 DAY))"
 );
+// Sidebar dipakai dua kali pada sebagian halaman; simpan hitungan agar query cukup sekali.
+if (!isset($jumlah_pesanan_pending)) {
+    $jumlah_pesanan_pending = (int) ambil_nilai(
+        "SELECT COUNT(*) FROM pesanan_online
+         WHERE transaksi_id IS NULL AND status IN ('baru', 'diproses')"
+    );
+}
 ?>
 <!-- Kepala sidebar: nama toko di kiri, LOGO di pojok kanan -->
 <div class="d-flex align-items-center p-3 border-bottom">
@@ -60,6 +67,9 @@ $jumlah_peringatan = (int) ambil_nilai(
                         <span class="me-auto"><?= e($label) ?></span>
                         <?php if ($kode === 'produk' && $jumlah_peringatan > 0): ?>
                             <span class="badge text-bg-danger rounded-pill"><?= $jumlah_peringatan ?></span>
+                        <?php endif; ?>
+                        <?php if ($kode === 'pesanan' && $jumlah_pesanan_pending > 0): ?>
+                            <span class="badge text-bg-danger rounded-pill"><?= $jumlah_pesanan_pending ?></span>
                         <?php endif; ?>
                     </a>
                 </li>

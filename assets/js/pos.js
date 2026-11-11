@@ -3,8 +3,10 @@
 // Membutuhkan admin.js (formatRupiah, esc).
 
 const semuaProduk = JSON.parse(document.getElementById('dataProduk').textContent);
+const pesananOnline = JSON.parse(document.getElementById('dataPesananOnline').textContent || 'null');
 let keranjang = [];          // [{id, nama, harga, stok, foto, qty}]
 let kategoriAktif = 'semua';
+let pesananOnlineValid = true;
 
 const el = {
     daftarProduk: document.getElementById('daftarProduk'),
@@ -74,6 +76,7 @@ el.scan.addEventListener('keydown', function (event) {
 
 /* ---------- Keranjang ---------- */
 function tambahKeKeranjang(id) {
+    if (pesananOnline) return;
     const produk = semuaProduk.find(function (p) { return p.id === id; });
     if (!produk) return;
 
@@ -88,6 +91,7 @@ function tambahKeKeranjang(id) {
 }
 
 function ubahJumlah(id, selisih) {
+    if (pesananOnline) return;
     const item = keranjang.find(function (i) { return i.id === id; });
     if (!item) return;
 
@@ -111,22 +115,25 @@ function tampilkanKeranjang() {
         el.daftarKeranjang.innerHTML = '<li class="list-group-item text-center text-body-secondary py-4">Belum ada barang.</li>';
     } else {
         el.daftarKeranjang.innerHTML = keranjang.map(function (i) {
+            const kontrol = pesananOnline
+                ? '<span class="badge text-bg-light">Qty ' + i.qty + '</span>'
+                : '<div class="btn-group btn-group-sm">'
+                    + '<button type="button" class="btn btn-outline-secondary" data-ubah="-1" data-id="' + i.id + '">&minus;</button>'
+                    + '<span class="btn btn-outline-secondary disabled">' + i.qty + '</span>'
+                    + '<button type="button" class="btn btn-outline-secondary" data-ubah="1" data-id="' + i.id + '">+</button>'
+                    + '</div>';
             return '<li class="list-group-item">'
                 + '<div class="d-flex align-items-center">'
                 + '<img src="' + esc(i.foto) + '" alt="" class="foto-produk-sm me-2">'
                 + '<div class="me-auto small"><div class="fw-semibold">' + esc(i.nama) + '</div>'
                 + '<span class="text-body-secondary">' + formatRupiah(i.harga) + '</span></div>'
-                + '<div class="btn-group btn-group-sm">'
-                + '<button type="button" class="btn btn-outline-secondary" data-ubah="-1" data-id="' + i.id + '">&minus;</button>'
-                + '<span class="btn btn-outline-secondary disabled">' + i.qty + '</span>'
-                + '<button type="button" class="btn btn-outline-secondary" data-ubah="1" data-id="' + i.id + '">+</button>'
-                + '</div></div></li>';
+                + kontrol + '</div></li>';
         }).join('');
     }
 
     el.total.textContent = formatRupiah(totalBelanja());
     el.inputKeranjang.value = JSON.stringify(keranjang.map(function (i) { return { id: i.id, qty: i.qty }; }));
-    el.tombolBayar.disabled = keranjang.length === 0;
+    el.tombolBayar.disabled = keranjang.length === 0 || !pesananOnlineValid;
     hitungKembalian();
 }
 
@@ -184,8 +191,36 @@ el.form.addEventListener('submit', function (event) {
     }
 });
 
-/* ---------- Pelanggan ---------- */
 const pilihPelanggan = document.getElementById('pilihPelanggan');
+if (pesananOnline) {
+    keranjang = (pesananOnline.items || []).map(function (item) {
+        const produk = semuaProduk.find(function (p) { return p.id === Number(item.id); });
+        const qty = Number(item.qty);
+        if (!produk || qty > Number(produk.stok)) pesananOnlineValid = false;
+        return {
+            id: Number(item.id), nama: produk ? produk.nama_produk : item.nama,
+            harga: Number(item.harga), stok: produk ? Number(produk.stok) : 0,
+            foto: produk ? produk.foto : '', qty: qty
+        };
+    });
+    pilihPelanggan.disabled = true;
+    document.getElementById('tombolKosongkan').classList.add('d-none');
+    const metodeUtang = document.querySelector('input[name="metode_pembayaran"][value="utang"]');
+    metodeUtang.disabled = true;
+    document.querySelector('label[for="' + metodeUtang.id + '"]').classList.add('d-none');
+    const metodePesanan = String(pesananOnline.metode || '').toLowerCase().includes('qris')
+        ? document.querySelector('input[name="metode_pembayaran"][value="qris"]')
+        : document.querySelector('input[name="metode_pembayaran"][value="tunai"]');
+    if (metodePesanan) {
+        metodePesanan.checked = true;
+        metodePesanan.dispatchEvent(new Event('change'));
+    }
+    if (!pesananOnlineValid) {
+        alert('Stok salah satu barang pesanan tidak mencukupi. Perbarui stok sebelum menyelesaikan transaksi.');
+    }
+}
+
+/* ---------- Pelanggan ---------- */
 const panelPelangganBaru = document.getElementById('panelPelangganBaru');
 const inputNamaBaru = panelPelangganBaru.querySelector('[name="nama_pelanggan_baru"]');
 

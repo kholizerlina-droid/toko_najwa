@@ -5,23 +5,35 @@ require_once __DIR__ . '/../includes/laporan.php';
 wajib_login();
 
 $toko        = pengaturan_toko();
-$tgl_mulai   = tanggal_dari_url('tgl_mulai', date('Y-m-01'));
-$tgl_selesai = tanggal_dari_url('tgl_selesai', date('Y-m-d'));
+$tgl_mulai   = tanggal_dari_url('tgl_mulai', '');
+$tgl_selesai = tanggal_dari_url('tgl_selesai', '');
 $lap         = hitung_laporan($tgl_mulai, $tgl_selesai);
 
-$pengeluaran = ambil_semua(
-    'SELECT * FROM pengeluaran WHERE tanggal BETWEEN ? AND ? ORDER BY tanggal',
-    'ss', [$tgl_mulai, $tgl_selesai]
-);
-$terlaris = ambil_semua(
-    "SELECT p.nama_produk, SUM(d.qty) AS terjual, SUM(d.subtotal) AS omset, SUM(d.keuntungan) AS laba
+$sql_pengeluaran = 'SELECT * FROM pengeluaran WHERE 1 = 1';
+$sql_terlaris = "SELECT p.nama_produk, SUM(d.qty) AS terjual, SUM(d.subtotal) AS omset, SUM(d.keuntungan) AS laba
      FROM transaksi_detail d
      JOIN transaksi t ON t.id = d.transaksi_id
      JOIN produk p ON p.id = d.produk_id
-     WHERE DATE(t.tanggal) BETWEEN ? AND ?
-     GROUP BY p.id ORDER BY terjual DESC LIMIT 10",
-    'ss', [$tgl_mulai, $tgl_selesai]
-);
+     WHERE 1 = 1";
+$tipe_pengeluaran = $tipe_terlaris = '';
+$param_pengeluaran = $param_terlaris = [];
+if ($tgl_mulai !== '') {
+    $sql_pengeluaran .= ' AND tanggal >= ?';
+    $tipe_pengeluaran .= 's'; $param_pengeluaran[] = $tgl_mulai;
+    $sql_terlaris .= ' AND DATE(t.tanggal) >= ?';
+    $tipe_terlaris .= 's'; $param_terlaris[] = $tgl_mulai;
+}
+if ($tgl_selesai !== '') {
+    $sql_pengeluaran .= ' AND tanggal <= ?';
+    $tipe_pengeluaran .= 's'; $param_pengeluaran[] = $tgl_selesai;
+    $sql_terlaris .= ' AND DATE(t.tanggal) <= ?';
+    $tipe_terlaris .= 's'; $param_terlaris[] = $tgl_selesai;
+}
+$pengeluaran = ambil_semua($sql_pengeluaran . ' ORDER BY tanggal', $tipe_pengeluaran, $param_pengeluaran);
+$terlaris = ambil_semua($sql_terlaris . ' GROUP BY p.id ORDER BY terjual DESC LIMIT 10', $tipe_terlaris, $param_terlaris);
+$label_periode = $tgl_mulai === '' && $tgl_selesai === ''
+    ? 'Semua Riwayat'
+    : ($tgl_mulai !== '' ? tanggal_indo($tgl_mulai) : 'Awal') . ' s.d. ' . ($tgl_selesai !== '' ? tanggal_indo($tgl_selesai) : 'Sekarang');
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -46,7 +58,7 @@ $terlaris = ambil_semua(
     </div>
 
     <h2 class="h5 text-center">LAPORAN LABA RUGI</h2>
-    <p class="text-center mb-4">Periode <?= tanggal_indo($tgl_mulai) ?> s.d. <?= tanggal_indo($tgl_selesai) ?></p>
+    <p class="text-center mb-4">Periode <?= e($label_periode) ?></p>
 
     <table class="table table-bordered">
         <tbody>

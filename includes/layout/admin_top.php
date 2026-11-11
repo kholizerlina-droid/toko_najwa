@@ -15,9 +15,9 @@ $toko = pengaturan_toko();
     <title><?= e($judul_halaman ?? 'Admin') ?> - <?= e($toko['nama_toko']) ?></title>
     <link rel="stylesheet" href="<?= url('assets/vendor/bootstrap/css/bootstrap.min.css') ?>">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-    <link rel="stylesheet" href="<?= url('assets/css/app.css') ?>">
+    <link rel="stylesheet" href="<?= url('assets/css/app.css') ?>?v=20261111-admin1">
 </head>
-<body class="bg-body-tertiary">
+<body class="admin-panel bg-body-tertiary">
 
 <!-- Bilah atas khusus HP: tombol buka menu + logo -->
 <nav class="navbar bg-body border-bottom sticky-top d-lg-none">

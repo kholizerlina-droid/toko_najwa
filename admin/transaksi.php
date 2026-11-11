@@ -8,11 +8,25 @@ if (is_post() && post('aksi') === 'batalkan') {
     $db = db();
     $db->begin_transaction();
     try {
+        // Kunci utang terkait agar kasir tidak mencatat cicilan bersamaan dengan pembatalan.
+        $piutang_terkait = ambil_semua('SELECT id FROM piutang WHERE transaksi_id = ? FOR UPDATE', 'i', [$id]);
+        $jumlah_pembayaran_kasbon = 0;
+        foreach ($piutang_terkait as $utang_terkait) {
+            $jumlah_pembayaran_kasbon += (int) ambil_nilai(
+                'SELECT COUNT(*) FROM piutang_pembayaran WHERE piutang_id = ?',
+                'i', [$utang_terkait['id']]
+            );
+        }
+        if ($jumlah_pembayaran_kasbon > 0) {
+            throw new Exception('Transaksi ini sudah memiliki pembayaran kasbon. Riwayat keuangan dipertahankan dan pembatalan ditolak.');
+        }
+
         jalankan(
             'UPDATE produk p JOIN transaksi_detail d ON d.produk_id = p.id
              SET p.stok = p.stok + d.qty WHERE d.transaksi_id = ?',
             'i', [$id]
         );
+        jalankan("UPDATE pesanan_online SET status = 'baru', transaksi_id = NULL WHERE transaksi_id = ?", 'i', [$id]);
         jalankan('DELETE FROM piutang WHERE transaksi_id = ?', 'i', [$id]);
         jalankan('DELETE FROM transaksi WHERE id = ?', 'i', [$id]);   // rincian ikut terhapus (CASCADE)
         $db->commit();
@@ -25,17 +39,30 @@ if (is_post() && post('aksi') === 'batalkan') {
 }
 
 /* ---------- Ambil data (dengan filter) ---------- */
-$tgl_mulai   = get('tgl_mulai', date('Y-m-d'));
-$tgl_selesai = get('tgl_selesai', date('Y-m-d'));
+$tgl_mulai   = get('tgl_mulai');
+$tgl_selesai = get('tgl_selesai');
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $tgl_mulai)) $tgl_mulai = '';
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $tgl_selesai)) $tgl_selesai = '';
 $metode      = get('metode');
 $cari        = get('q');
 
 $sql   = "SELECT t.*, u.nama_lengkap AS kasir,
                  (SELECT COALESCE(SUM(keuntungan), 0) FROM transaksi_detail WHERE transaksi_id = t.id) AS laba
           FROM transaksi t LEFT JOIN users u ON u.id = t.user_id
-          WHERE DATE(t.tanggal) BETWEEN ? AND ?";
-$tipe  = 'ss';
-$param = [$tgl_mulai, $tgl_selesai];
+          WHERE 1 = 1";
+$tipe  = '';
+$param = [];
+
+if ($tgl_mulai !== '') {
+    $sql .= ' AND DATE(t.tanggal) >= ?';
+    $tipe .= 's';
+    $param[] = $tgl_mulai;
+}
+if ($tgl_selesai !== '') {
+    $sql .= ' AND DATE(t.tanggal) <= ?';
+    $tipe .= 's';
+    $param[] = $tgl_selesai;
+}
 
 if ($metode !== '') {
     $sql .= ' AND t.metode_pembayaran = ?';
@@ -64,7 +91,7 @@ include __DIR__ . '/../includes/layout/admin_top.php';
 
 <div class="mb-4">
     <h1 class="h3 mb-0">Riwayat Transaksi</h1>
-    <p class="text-body-secondary mb-0">Daftar nota penjualan kasir.</p>
+    <p class="text-body-secondary mb-0">Daftar seluruh nota penjualan kasir. Kosongkan tanggal untuk melihat semua riwayat.</p>
 </div>
 
 <form method="get" class="card card-body mb-3">
@@ -82,7 +109,10 @@ include __DIR__ . '/../includes/layout/admin_top.php';
             </select></div>
         <div class="col-md-4"><label class="form-label small mb-1">Cari faktur / pelanggan</label>
             <input type="search" name="q" class="form-control" value="<?= e($cari) ?>"></div>
-        <div class="col-md-2 d-grid"><button class="btn btn-primary" type="submit">Terapkan</button></div>
+        <div class="col-md-2 d-grid gap-1">
+            <button class="btn btn-primary" type="submit">Terapkan</button>
+            <a href="transaksi.php" class="btn btn-sm btn-outline-secondary">Semua riwayat</a>
+        </div>
     </div>
 </form>
 

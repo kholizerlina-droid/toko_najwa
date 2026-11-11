@@ -6,6 +6,10 @@ require_once __DIR__ . '/../includes/init_admin.php';
 /* ---------- Proses pembayaran ---------- */
 $nota_selesai = null;   // nomor faktur jika berhasil
 $pesan_error  = '';
+$pesanan_online_id = (int) (is_post() ? post('pesanan_online_id') : get('pesanan'));
+$pesanan_kasir = null;
+$kunci_faktur = null;
+$kunci_faktur_diambil = false;
 
 if (is_post() && post('aksi') === 'bayar') {
     $keranjang   = json_decode(post('keranjang', '[]'), true) ?: [];
@@ -24,11 +28,51 @@ if (is_post() && post('aksi') === 'bayar') {
             throw new Exception('Metode pembayaran tidak dikenal.');
         }
 
+        $harga_pesanan = [];
+        $nama_pemesan_online = '';
+        if ($pesanan_online_id > 0) {
+            if (!in_array($metode, ['tunai', 'qris'], true)) {
+                throw new Exception('Pesanan online hanya dapat diselesaikan dengan pembayaran tunai atau QRIS.');
+            }
+            $pesanan = ambil_satu('SELECT * FROM pesanan_online WHERE id = ? FOR UPDATE', 'i', [$pesanan_online_id]);
+            if (!$pesanan || $pesanan['transaksi_id'] !== null || !in_array($pesanan['status'], ['baru', 'diproses'], true)) {
+                throw new Exception('Pesanan online ini sudah diproses atau tidak tersedia.');
+            }
+            $item_pesanan = json_decode($pesanan['item_json'], true);
+            if (!is_array($item_pesanan) || !$item_pesanan) {
+                throw new Exception('Rincian pesanan online tidak valid.');
+            }
+            $keranjang = [];
+            foreach ($item_pesanan as $item) {
+                $produk_id = (int) ($item['id'] ?? 0);
+                $qty = (int) ($item['qty'] ?? 0);
+                $harga = (float) ($item['harga'] ?? 0);
+                if ($produk_id <= 0 || $qty <= 0 || $harga < 0 || isset($harga_pesanan[$produk_id])) {
+                    throw new Exception('Rincian barang pesanan online tidak valid.');
+                }
+                $keranjang[] = ['id' => $produk_id, 'qty' => $qty];
+                $harga_pesanan[$produk_id] = $harga;
+            }
+            $nama_pemesan_online = $pesanan['nama_pemesan'];
+            $catatan = $pesanan['catatan'] ?: $catatan;
+        }
+
         // 0. Tentukan pelanggan (umum / terdaftar / baru). Pelanggan baru ikut dibatalkan jika transaksi gagal.
         $pelanggan    = 'Warga / Umum';
         $pelanggan_id = null;
         $telepon      = '';
-        if ($pilih_pelanggan === 'baru') {
+        if ($nama_pemesan_online !== '') {
+            $data = ambil_satu('SELECT id, nama_pelanggan, no_telepon FROM pelanggan WHERE nama_pelanggan = ?', 's', [$nama_pemesan_online]);
+            if (!$data) {
+                jalankan('INSERT INTO pelanggan (nama_pelanggan) VALUES (?)', 's', [$nama_pemesan_online]);
+                $pelanggan_id = $db->insert_id;
+                $pelanggan = $nama_pemesan_online;
+            } else {
+                $pelanggan_id = (int) $data['id'];
+                $pelanggan = $data['nama_pelanggan'];
+                $telepon = (string) $data['no_telepon'];
+            }
+        } elseif ($pilih_pelanggan === 'baru') {
             if ($nama_baru === '') throw new Exception('Nama pelanggan baru wajib diisi.');
             if (ambil_nilai('SELECT COUNT(*) FROM pelanggan WHERE nama_pelanggan = ?', 's', [$nama_baru]) > 0) {
                 throw new Exception("Pelanggan \"$nama_baru\" sudah terdaftar, silakan pilih dari daftar.");
@@ -61,9 +105,10 @@ if (is_post() && post('aksi') === 'bayar') {
                 throw new Exception("Stok {$produk['nama_produk']} tidak cukup (sisa {$produk['stok']}).");
             }
 
-            $subtotal = $produk['harga_jual'] * $qty;
+            $harga_jual = $harga_pesanan[$produk['id']] ?? (float) $produk['harga_jual'];
+            $subtotal = $harga_jual * $qty;
             $total   += $subtotal;
-            $baris[]  = $produk + ['qty' => $qty, 'subtotal' => $subtotal];
+            $baris[]  = array_merge($produk, ['harga_jual' => $harga_jual, 'qty' => $qty, 'subtotal' => $subtotal]);
         }
         if (!$baris) throw new Exception('Keranjang masih kosong.');
 
@@ -92,6 +137,9 @@ if (is_post() && post('aksi') === 'bayar') {
 
         // 3. Buat nomor faktur: TRX-TanggalHariIni-0001, 0002, dst.
         $awalan     = 'TRX-' . date('Ymd') . '-';
+        $kunci_faktur = 'toko_najwa_' . date('Ymd');
+        $kunci_faktur_diambil = (int) ambil_nilai('SELECT GET_LOCK(?, 10)', 's', [$kunci_faktur]) === 1;
+        if (!$kunci_faktur_diambil) throw new Exception('Kasir lain sedang menyimpan transaksi. Silakan coba lagi.');
         $terakhir   = ambil_nilai('SELECT MAX(no_faktur) FROM transaksi WHERE no_faktur LIKE ?', 's', [$awalan . '%']);
         $urutan     = $terakhir ? ((int) substr($terakhir, -4)) + 1 : 1;
         $no_faktur  = $awalan . str_pad($urutan, 4, '0', STR_PAD_LEFT);
@@ -126,11 +174,46 @@ if (is_post() && post('aksi') === 'bayar') {
             );
         }
 
+        if ($pesanan_online_id > 0) {
+            $stmt_pesanan = jalankan(
+                "UPDATE pesanan_online SET status = 'selesai', transaksi_id = ? WHERE id = ? AND transaksi_id IS NULL",
+                'ii', [$transaksi_id, $pesanan_online_id]
+            );
+            if ($stmt_pesanan->affected_rows !== 1) {
+                throw new Exception('Pesanan online gagal ditautkan ke transaksi. Silakan coba lagi.');
+            }
+        }
+
         $db->commit();
         $nota_selesai = $no_faktur;
+        $pesanan_online_id = 0;
+        if ($kunci_faktur_diambil) {
+            try { ambil_nilai('SELECT RELEASE_LOCK(?)', 's', [$kunci_faktur]); } catch (Throwable $abaikan) {}
+            $kunci_faktur_diambil = false;
+        }
     } catch (Exception $e) {
         $db->rollback();
+        if ($kunci_faktur_diambil) {
+            try { ambil_nilai('SELECT RELEASE_LOCK(?)', 's', [$kunci_faktur]); } catch (Throwable $abaikan) {}
+            $kunci_faktur_diambil = false;
+        }
         $pesan_error = $e->getMessage();
+    }
+}
+
+if ($pesanan_online_id > 0 && !$nota_selesai) {
+    $pesanan = ambil_satu('SELECT * FROM pesanan_online WHERE id = ?', 'i', [$pesanan_online_id]);
+    if ($pesanan && $pesanan['transaksi_id'] === null && in_array($pesanan['status'], ['baru', 'diproses'], true)) {
+        $pesanan_kasir = [
+            'id' => (int) $pesanan['id'],
+            'kode' => $pesanan['kode_pesanan'],
+            'nama' => $pesanan['nama_pemesan'],
+            'metode' => $pesanan['metode_bayar'],
+            'items' => json_decode($pesanan['item_json'], true) ?: [],
+        ];
+    } elseif (!$pesan_error) {
+        $pesan_error = 'Pesanan online ini sudah diproses atau tidak tersedia.';
+        $pesanan_online_id = 0;
     }
 }
 
@@ -156,7 +239,7 @@ $daftar_pelanggan = ambil_semua(
 /* ---------- Tampilan ---------- */
 $judul_halaman  = 'Kasir (POS)';
 $menu_aktif     = 'pos';
-$skrip_tambahan = ['pos.js'];
+$skrip_tambahan = ['pos.js?v=20261111-1'];
 include __DIR__ . '/../includes/layout/admin_top.php';
 ?>
 
@@ -174,6 +257,12 @@ include __DIR__ . '/../includes/layout/admin_top.php';
 <?php endif; ?>
 
 <h1 class="h3 mb-3">Kasir</h1>
+<?php if ($pesanan_kasir): ?>
+    <div class="alert alert-info">
+        Memproses pesanan <strong><?= e($pesanan_kasir['kode']) ?></strong> atas nama <strong><?= e($pesanan_kasir['nama']) ?></strong>.
+        Pesanan masuk ke riwayat dan laporan setelah kasir mengonfirmasi pembayaran.
+    </div>
+<?php endif; ?>
 
 <div class="row g-4">
     <!-- Kiri: pilih produk -->
@@ -209,6 +298,7 @@ include __DIR__ . '/../includes/layout/admin_top.php';
             <?= csrf_field() ?>
             <input type="hidden" name="aksi" value="bayar">
             <input type="hidden" name="keranjang" id="inputKeranjang">
+            <input type="hidden" name="pesanan_online_id" id="pesananOnlineId" value="<?= $pesanan_kasir ? (int) $pesanan_kasir['id'] : 0 ?>">
 
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span class="fw-semibold"><i class="bi bi-basket me-1"></i> Keranjang</span>
@@ -288,5 +378,6 @@ include __DIR__ . '/../includes/layout/admin_top.php';
 
 <!-- Data produk untuk JavaScript kasir -->
 <script type="application/json" id="dataProduk"><?= json_encode($daftar_produk, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
+<script type="application/json" id="dataPesananOnline"><?= json_encode($pesanan_kasir, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
 
 <?php include __DIR__ . '/../includes/layout/admin_bottom.php'; ?>
