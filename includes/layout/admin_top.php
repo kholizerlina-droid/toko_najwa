@@ -15,9 +15,10 @@ $toko = pengaturan_toko();
     <title><?= e($judul_halaman ?? 'Admin') ?> - <?= e($toko['nama_toko']) ?></title>
     <link rel="stylesheet" href="<?= url('assets/vendor/bootstrap/css/bootstrap.min.css') ?>">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-    <link rel="stylesheet" href="<?= url('assets/css/app.css') ?>?v=20261111-admin1">
+    <link rel="stylesheet" href="<?= url('assets/css/app.css') ?>">
+    <link rel="stylesheet" href="<?= url('assets/css/admin.css') ?>">
 </head>
-<body class="admin-panel bg-body-tertiary">
+<body class="admin">
 
 <!-- Bilah atas khusus HP: tombol buka menu + logo -->
 <nav class="navbar bg-body border-bottom sticky-top d-lg-none">
@@ -26,7 +27,6 @@ $toko = pengaturan_toko();
             <i class="bi bi-list"></i>
         </button>
         <span class="navbar-brand mb-0 mx-3 me-auto fw-bold text-truncate"><?= e($toko['nama_toko']) ?></span>
-        <?= logo(36, 'flex-shrink-0') ?>
     </div>
 </nav>
 

@@ -1,0 +1,78 @@
+/* assets/css/admin.css
+   Tampilan SEDERHANA khusus halaman admin (dimuat setelah app.css).
+   Hanya berlaku di <body class="admin">, jadi website pelanggan tidak ikut berubah.
+   Prinsip: putih & abu-abu, tanpa bayangan, tanpa warna pastel, warna hanya untuk
+   penanda penting (stok habis, kasbon, laba). */
+
+body.admin {
+    --bs-body-bg: #f6f7f8;
+    --bs-body-font-size: .95rem;
+    --bs-border-radius: .25rem;
+    --bs-border-radius-sm: .2rem;
+    --bs-border-radius-lg: .3rem;
+    --bs-primary: #212529;
+    --bs-primary-rgb: 33, 37, 41;
+    --bs-link-color: #212529;
+    --bs-link-color-rgb: 33, 37, 41;
+    --bs-link-hover-color: #000;
+    --bs-link-hover-color-rgb: 0, 0, 0;
+    background: var(--bs-body-bg);
+}
+
+/* Kartu: garis tipis saja, tanpa bayangan */
+body.admin .card { border-color: #dee2e6; box-shadow: none; }
+body.admin .card-header { background: #fff; font-weight: 600; }
+
+/* Tombol utama: abu-abu tua polos */
+body.admin .btn-primary {
+    --bs-btn-color: #fff;
+    --bs-btn-bg: #212529;
+    --bs-btn-border-color: #212529;
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: #000;
+    --bs-btn-hover-border-color: #000;
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: #000;
+    --bs-btn-active-border-color: #000;
+    --bs-btn-disabled-color: #fff;
+    --bs-btn-disabled-bg: #6c757d;
+    --bs-btn-disabled-border-color: #6c757d;
+}
+body.admin .btn-outline-primary {
+    --bs-btn-color: #212529;
+    --bs-btn-border-color: #adb5bd;
+    --bs-btn-hover-color: #fff;
+    --bs-btn-hover-bg: #212529;
+    --bs-btn-hover-border-color: #212529;
+    --bs-btn-active-color: #fff;
+    --bs-btn-active-bg: #000;
+    --bs-btn-active-border-color: #000;
+}
+body.admin .text-bg-primary,
+body.admin .bg-primary { color: #fff !important; background-color: #212529 !important; }
+body.admin .form-control:focus,
+body.admin .form-select:focus { border-color: #6c757d; box-shadow: none; }
+body.admin .form-check-input:checked { background-color: #212529; border-color: #212529; }
+body.admin .spinner-border { color: #212529; }
+
+/* Lencana: kotak polos, bukan bulat */
+body.admin .badge { font-weight: 500; border-radius: .2rem; }
+
+/* Sidebar: daftar tautan biasa, menu aktif cukup ditebalkan + garis kiri */
+body.admin .sidebar { width: 220px; }
+body.admin .menu-admin .nav-link {
+    color: #495057;
+    border-radius: 0;
+    padding: .5rem .75rem;
+    border-left: 3px solid transparent;
+}
+body.admin .menu-admin .nav-link:hover { background: #f1f3f5; }
+body.admin .menu-admin .nav-link.active {
+    background: #f1f3f5;
+    color: #000;
+    font-weight: 600;
+    border-left-color: #212529;
+}
+
+/* Ringkasan dashboard: angka besar, tanpa hiasan */
+body.admin .ringkasan .angka { font-size: 1.5rem; font-weight: 600; }
